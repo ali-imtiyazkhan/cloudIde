@@ -1,0 +1,319 @@
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RepositoryVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+enum WorkspaceStatus {
+  PENDING
+  PROVISIONING
+  STOPPED
+  STARTING
+  RUNNING
+  SUSPENDED
+  FAILED
+  DELETED
+}
+
+enum ContainerStatus {
+  CREATING
+  RUNNING
+  EXITED
+  DESTROYED
+  FAILED
+}
+
+enum TerminalStatus {
+  OPEN
+  CLOSED
+}
+
+enum AiMessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+  TOOL
+}
+
+enum AiCommandDecision {
+  PENDING
+  ALLOWED
+  REJECTED
+  EXPIRED
+}
+
+enum UsageKind {
+  COMPUTE_SECONDS
+  STORAGE_BYTES
+  AI_TOKENS
+  EGRESS_BYTES
+}
+
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String?  @unique
+  name      String?
+  image     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  githubAccounts  GitHubAccount[]
+  sessions        Session[]
+  repositories    Repository[]
+  projects        Project[]
+  workspaces      Workspace[]
+  aiConversations AiConversation[]
+  usageRecords    UsageRecord[]
+}
+
+model GitHubAccount {
+  id              String    @id @default(uuid()) @db.Uuid
+  userId          String    @db.Uuid
+  githubId        BigInt    @unique
+  login           String
+  name            String?
+  avatarUrl       String?
+  accessTokenEnc  String
+  refreshTokenEnc String?
+  tokenExpiresAt  DateTime?
+  scopes          String[]  @default([])
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("github_accounts")
+}
+
+model Session {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @db.Uuid
+  tokenHash    String   @unique
+  ipAddress    String?
+  userAgent    String?
+  expiresAt    DateTime
+  lastActiveAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model Repository {
+  id            String               @id @default(uuid()) @db.Uuid
+  userId        String               @db.Uuid
+  githubId      BigInt               @unique
+  owner         String
+  name          String
+  fullName      String
+  htmlUrl       String
+  cloneUrl      String
+  defaultBranch String               @default("main")
+  description   String?
+  visibility    RepositoryVisibility @default(PRIVATE)
+  isFork        Boolean              @default(false)
+  pushedAt      DateTime?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projects Project[]
+
+  @@unique([userId, fullName])
+  @@index([userId])
+  @@map("repositories")
+}
+
+model Project {
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @db.Uuid
+  repositoryId  String    @db.Uuid
+  name          String
+  description   String?
+  branch        String
+
+  storagePrefix String
+  lastSyncedAt  DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  repository Repository  @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+  workspaces Workspace[]
+
+  @@index([userId])
+  @@index([repositoryId])
+  @@map("projects")
+}
+
+model Workspace {
+  id            String          @id @default(uuid()) @db.Uuid
+  userId        String          @db.Uuid
+  projectId     String          @db.Uuid
+  status        WorkspaceStatus @default(PENDING)
+ 
+  containerId   String?         @unique @db.Uuid
+  previewUrl    String?
+  cpuLimit      Int?            @default(2)
+  memoryLimitMb Int?            @default(4096)
+  diskLimitMb   Int?            @default(20480)
+  lastActiveAt  DateTime        @default(now())
+  startedAt     DateTime?
+  stoppedAt     DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project          Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  container        Container?         @relation
+  containerHistory ContainerHistory[]
+  terminals        TerminalSession[]
+  aiConversations  AiConversation[]
+  usageRecords     UsageRecord[]
+
+  @@index([userId, status])
+  @@index([projectId])
+  @@map("workspaces")
+}
+
+model Container {
+  id           String          @id @default(uuid()) @db.Uuid
+  dockerId     String          @unique
+  image        String
+  status       ContainerStatus @default(CREATING)
+  hostPath     String?
+  internalPath String          @default("/workspace")
+  exitCode     Int?
+  startedAt    DateTime?
+  stoppedAt    DateTime?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  workspaceId String?    @unique @db.Uuid
+
+  @@index([status])
+  @@map("containers")
+}
+
+
+model ContainerHistory {
+  id          String    @id @default(uuid()) @db.Uuid
+  workspaceId String    @db.Uuid
+  dockerId    String
+  image       String
+  exitCode    Int?
+  startedAt   DateTime  @default(now())
+  stoppedAt   DateTime?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@map("container_history")
+}
+
+model TerminalSession {
+  id           String         @id @default(uuid()) @db.Uuid
+  workspaceId  String         @db.Uuid
+  status       TerminalStatus @default(OPEN)
+  shell        String         @default("/bin/bash")
+  cols         Int            @default(80)
+  rows         Int            @default(24)
+  lastActiveAt DateTime       @default(now())
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, status])
+  @@map("terminal_sessions")
+}
+
+
+model AiConversation {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  workspaceId String?  @db.Uuid
+  title       String?
+  model       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace?  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  messages  AiMessage[]
+
+  @@index([userId])
+  @@index([workspaceId])
+  @@map("ai_conversations")
+}
+
+model AiMessage {
+  id               String        @id @default(uuid()) @db.Uuid
+  conversationId   String        @db.Uuid
+  role             AiMessageRole
+  content          String
+
+  metadata         Json?
+  promptTokens     Int?
+  completionTokens Int?
+  createdAt        DateTime      @default(now())
+
+  conversation    AiConversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  commandProposal AiCommandProposal?
+
+  @@index([conversationId])
+  @@map("ai_messages")
+}
+
+model AiCommandProposal {
+  id        String            @id @default(uuid()) @db.Uuid
+  messageId String            @unique @db.Uuid
+  command   String
+  cwd       String?
+  reason    String?
+  decision  AiCommandDecision @default(PENDING)
+  decidedBy String?           @db.Uuid
+  decidedAt DateTime?
+  expiresAt DateTime?
+  createdAt DateTime          @default(now())
+
+  message AiMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([decision])
+  @@map("ai_command_proposals")
+}
+
+// ---------------------------------------------------------------------------
+// Usage and billing
+// ---------------------------------------------------------------------------
+
+model UsageRecord {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  workspaceId String?   @db.Uuid
+  kind        UsageKind
+  quantity    Decimal   @db.Decimal(18, 4)
+  unit        String
+  recordedAt  DateTime  @default(now())
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  @@index([userId, kind, recordedAt])
+  @@index([workspaceId])
+  @@map("usage_records")
+}
