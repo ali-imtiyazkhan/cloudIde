@@ -1,20 +1,39 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, ApiError } from "../../lib/api";
 import type {
+  CreateWorkspaceResponse,
   GithubRepo,
   ImportedProject,
   ImportResponse,
   ProjectsResponse,
   ReposResponse,
   SessionUser,
+  WorkspaceStatus,
+  WorkspaceStatusResponse,
 } from "../../lib/types";
 import styles from "./page.module.css";
 
 const PER_PAGE = 30;
+
+/** Workspace statuses that mean "still coming up" — poll until they resolve. */
+const TRANSITIONAL: WorkspaceStatus[] = ["PENDING", "PROVISIONING", "STARTING"];
+
+/** Pulls the human `message` out of the API's `{ error, message }` bodies. */
+function apiErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) {
+    try {
+      const body = JSON.parse(err.message) as { message?: string };
+      if (body.message) return body.message;
+    } catch {
+      // Not JSON — fall through to the fallback.
+    }
+  }
+  return fallback;
+}
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -32,8 +51,11 @@ export default function DashboardPage() {
 
   const [search, setSearch] = useState("");
   const [importing, setImporting] = useState<number | null>(null);
+  const [startingProject, setStartingProject] = useState<string | null>(null);
+  const [stoppingWorkspace, setStoppingWorkspace] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const pollingRef = useRef<Set<string>>(new Set());
 
   const loadProjects = useCallback(async () => {
     setProjectsLoading(true);
@@ -69,6 +91,45 @@ export default function DashboardPage() {
       setReposLoading(false);
     }
   }, [router]);
+
+  /** Watches a workspace until it leaves the transitional states, then refreshes. */
+  const pollWorkspace = useCallback(
+    async (workspaceId: string) => {
+      if (pollingRef.current.has(workspaceId)) return;
+      pollingRef.current.add(workspaceId);
+      try {
+        for (let attempt = 0; attempt < 90; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          let status: WorkspaceStatus;
+          try {
+            ({ status } = await api<WorkspaceStatusResponse>(
+              `/workspaces/${workspaceId}/status`,
+            ));
+          } catch {
+            // The status endpoint marks rows FAILED on Docker errors itself;
+            // a refresh below picks that up.
+            break;
+          }
+          if (!TRANSITIONAL.includes(status)) break;
+        }
+      } finally {
+        pollingRef.current.delete(workspaceId);
+        void loadProjects();
+      }
+    },
+    [loadProjects],
+  );
+
+  // If the dashboard loads while a workspace is still provisioning (e.g. the
+  // page was reloaded mid-create), resume watching it.
+  useEffect(() => {
+    const pending = projects.find(
+      (project) =>
+        project.latestWorkspace &&
+        TRANSITIONAL.includes(project.latestWorkspace.status),
+    );
+    if (pending?.latestWorkspace) void pollWorkspace(pending.latestWorkspace.id);
+  }, [projects, pollWorkspace]);
 
   useEffect(() => {
     api<{ user: SessionUser | null }>("/auth/me")
@@ -112,6 +173,54 @@ export default function DashboardPage() {
     }
   }
 
+  async function startWorkspace(projectId: string) {
+    setStartingProject(projectId);
+    setNotice(null);
+    setError(null);
+    try {
+      const { workspace } = await api<CreateWorkspaceResponse>("/workspaces", {
+        method: "POST",
+        body: JSON.stringify({ projectId }),
+      });
+      setNotice(
+        workspace.status === "RUNNING"
+          ? "Workspace is running."
+          : "Workspace is starting…",
+      );
+      await loadProjects();
+      if (TRANSITIONAL.includes(workspace.status)) {
+        void pollWorkspace(workspace.id);
+      }
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        router.replace("/");
+        return;
+      }
+      setError(apiErrorMessage(err, "Failed to start the workspace."));
+    } finally {
+      setStartingProject(null);
+    }
+  }
+
+  async function stopWorkspace(workspaceId: string) {
+    setStoppingWorkspace(workspaceId);
+    setNotice(null);
+    setError(null);
+    try {
+      await api(`/workspaces/${workspaceId}/stop`, { method: "POST" });
+      setNotice("Workspace stopped.");
+      await loadProjects();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        router.replace("/");
+        return;
+      }
+      setError(apiErrorMessage(err, "Failed to stop the workspace."));
+    } finally {
+      setStoppingWorkspace(null);
+    }
+  }
+
   async function logout() {
     try {
       await api("/auth/logout", { method: "POST" });
@@ -119,6 +228,56 @@ export default function DashboardPage() {
       router.replace("/");
       router.refresh();
     }
+  }
+
+  function workspaceControls(project: ImportedProject) {
+    const ws = project.latestWorkspace;
+    const starting = startingProject === project.id;
+    const stopping = stoppingWorkspace === ws?.id;
+
+    if (starting || (ws && TRANSITIONAL.includes(ws.status))) {
+      return (
+        <span className={styles.wsProvisioning}>
+          <span className={styles.spinnerSmall} />
+          {ws ? "Provisioning…" : "Starting…"}
+        </span>
+      );
+    }
+
+    if (ws?.status === "RUNNING") {
+      return (
+        <span className={styles.wsControls}>
+          {ws.previewUrl && (
+            <a
+              className={styles.openIdeBtn}
+              href={ws.previewUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open IDE ↗
+            </a>
+          )}
+          <button
+            className={styles.stopBtn}
+            disabled={stopping}
+            onClick={() => stopWorkspace(ws.id)}
+          >
+            {stopping ? "Stopping…" : "Stop"}
+          </button>
+        </span>
+      );
+    }
+
+    // STOPPED, FAILED, or never started — offer a (re)start.
+    return (
+      <button
+        className={styles.startBtn}
+        disabled={starting}
+        onClick={() => startWorkspace(project.id)}
+      >
+        {ws?.status === "FAILED" ? "Retry" : "Start"}
+      </button>
+    );
   }
 
   if (!authChecked) {
@@ -160,6 +319,9 @@ export default function DashboardPage() {
       </header>
 
       <main className={styles.main}>
+        {notice && <div className={styles.notice}>{notice}</div>}
+        {error && <div className={styles.errorBanner}>{error}</div>}
+
         <section>
           <div className={styles.sectionHead}>
             <h2>Projects</h2>
@@ -194,9 +356,7 @@ export default function DashboardPage() {
                     {project.repository.isFork && (
                       <span className={styles.badgeMuted}>fork</span>
                     )}
-                    <span className={styles.workspaceSoon}>
-                      Workspace · coming soon
-                    </span>
+                    {workspaceControls(project)}
                   </div>
                 </article>
               ))}
@@ -215,9 +375,6 @@ export default function DashboardPage() {
               onChange={(event) => setSearch(event.target.value)}
             />
           </div>
-
-          {notice && <div className={styles.notice}>{notice}</div>}
-          {error && <div className={styles.errorBanner}>{error}</div>}
 
           <div className={styles.repoList}>
             {filteredRepos.map((repo) => {

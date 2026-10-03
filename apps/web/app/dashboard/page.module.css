@@ -199,8 +199,7 @@
 }
 
 .badge,
-.badgeMuted,
-.workspaceSoon {
+.badgeMuted {
   font-family: var(--font-geist-mono);
   font-size: 11px;
   padding: 3px 8px;
@@ -218,10 +217,84 @@
   text-transform: uppercase;
 }
 
-.workspaceSoon {
+/* Workspace controls */
+
+.wsControls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   margin-left: auto;
+}
+
+.startBtn,
+.stopBtn,
+.openIdeBtn {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.startBtn {
+  margin-left: auto;
+  background: #238636;
+  border: none;
+  color: #fff;
+}
+
+.startBtn:hover:not(:disabled) {
+  background: #2ea043;
+}
+
+.stopBtn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: #f85149;
+}
+
+.stopBtn:hover:not(:disabled) {
+  border-color: #f85149;
+}
+
+.openIdeBtn {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--accent);
+}
+
+.openIdeBtn:hover {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.startBtn:disabled,
+.stopBtn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.wsProvisioning {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-geist-mono);
+  font-size: 12px;
   color: #fbbf24;
-  background: color-mix(in srgb, #fbbf24 14%, transparent);
+  white-space: nowrap;
+}
+
+.spinnerSmall {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: #fbbf24;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
 }
 
 .repoList {
