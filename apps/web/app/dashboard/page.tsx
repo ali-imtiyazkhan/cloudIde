@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, ApiError } from "../../lib/api";
 import type {
@@ -139,10 +140,10 @@ export default function DashboardPage() {
   return (
     <div className={styles.page}>
       <header className={styles.header}>
-        <a href="/" className={styles.logo}>
+        <Link href="/" className={styles.logo}>
           <span className={styles.logoMark} />
           CloudIDE
-        </a>
+        </Link>
 
         <div className={styles.user}>
           {user?.image && (

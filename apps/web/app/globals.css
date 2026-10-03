@@ -1,10 +1,15 @@
 :root {
-  --background: #0d1117;
-  --foreground: #e6edf3;
-  --muted: #8b949e;
-  --surface: #161b22;
-  --border: #30363d;
-  --accent: #58a6ff;
+  --background: #03060c;
+  --foreground: #f3f6fb;
+  --muted: rgba(226, 232, 240, 0.72);
+  --surface: rgba(8, 14, 24, 0.58);
+  --surface-strong: rgba(8, 14, 24, 0.78);
+  --border: rgba(255, 255, 255, 0.12);
+  --accent: #7dd3fc;
+  --accent-strong: #38bdf8;
+  --success: #34d399;
+  --danger: #fb7185;
+  --glow: rgba(56, 189, 248, 0.28);
   color-scheme: dark;
 }
 
@@ -14,11 +19,16 @@ body {
   overflow-x: hidden;
 }
 
+html {
+  background: var(--background);
+}
+
 body {
   color: var(--foreground);
   background: var(--background);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  min-height: 100svh;
 }
 
 * {
@@ -34,4 +44,8 @@ a {
 
 button {
   font-family: inherit;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
 }
