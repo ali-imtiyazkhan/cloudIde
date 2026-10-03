@@ -65,6 +65,18 @@ export type CreateWorkspaceResponse = {
   workspace: Workspace;
 };
 
+export type ConnectResponse = {
+  host: string;
+  port: number;
+  user: string;
+  hostAlias: string;
+  privateKey: string;
+  publicKey: string;
+  command: string;
+  sshConfig: string;
+  expiresAt: string;
+};
+
 export type ImportedProject = {
   id: string;
   name: string;

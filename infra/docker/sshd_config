@@ -1,0 +1,23 @@
+# CloudIDE workspace sshd — key-only auth on a loopback-published port.
+Port 2222
+ListenAddress 0.0.0.0
+
+HostKey /etc/ssh/ssh_host_ed25519_key
+HostKey /etc/ssh/ssh_host_rsa_key
+
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+
+# The API injects one ephemeral key per "Connect" and wipes it on Stop.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+AllowUsers coder
+
+# Containers don't need PAM, and it misbehaves without a full init.
+UsePAM no
+
+AllowTcpForwarding yes
+X11Forwarding no
+PrintMotd no
+PidFile /run/sshd.pid
