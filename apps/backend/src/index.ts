@@ -6,6 +6,7 @@ import { authRouter } from "./routes/auth";
 import { meRouter } from "./routes/me";
 import { projectsRouter } from "./routes/projects";
 import { reposRouter } from "./routes/repos";
+import { workspacesRouter } from "./routes/workspaces";
 
 const env = getEnv();
 
@@ -23,6 +24,7 @@ app.use("/auth", authRouter);
 app.use("/auth", meRouter);
 app.use("/repos", reposRouter);
 app.use("/projects", projectsRouter);
+app.use("/workspaces", workspacesRouter);
 
 app.use(
   (

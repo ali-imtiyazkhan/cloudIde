@@ -21,6 +21,8 @@ projectsRouter.get("/", async (req, res) => {
           htmlUrl: true,
           visibility: true,
           defaultBranch: true,
+          description: true,
+          isFork: true,
         },
       },
       workspaces: {
