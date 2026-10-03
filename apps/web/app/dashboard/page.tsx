@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, ApiError } from "../../lib/api";
 import type {
+  ConnectResponse,
   CreateWorkspaceResponse,
   GithubRepo,
   ImportedProject,
@@ -21,6 +22,48 @@ const PER_PAGE = 30;
 
 /** Workspace statuses that mean "still coming up" — poll until they resolve. */
 const TRANSITIONAL: WorkspaceStatus[] = ["PENDING", "PROVISIONING", "STARTING"];
+
+/** The user's choice of editor — all of them speak SSH Remote. */
+type IdeId = "vscode" | "cursor" | "antigravity" | "jetbrains";
+
+const IDES: { id: IdeId; name: string; steps: (alias: string) => string[] }[] = [
+  {
+    id: "vscode",
+    name: "VS Code",
+    steps: (alias) => [
+      "Install the “Remote - SSH” extension (⇧⌘X → search “Remote - SSH”).",
+      "⇧⌘P → “Remote-SSH: Connect to Host”.",
+      `Pick “${alias}” — the project opens, running in the cloud.`,
+    ],
+  },
+  {
+    id: "cursor",
+    name: "Cursor",
+    steps: (alias) => [
+      "Cursor uses the same SSH config as VS Code — nothing extra to install.",
+      "⇧⌘P → “Remote-SSH: Connect to Host”.",
+      `Pick “${alias}”.`,
+    ],
+  },
+  {
+    id: "antigravity",
+    name: "Antigravity",
+    steps: (alias) => [
+      "Antigravity connects over standard SSH as well.",
+      "Command palette → “Remote-SSH: Connect to Host”.",
+      `Pick “${alias}”.`,
+    ],
+  },
+  {
+    id: "jetbrains",
+    name: "JetBrains Gateway",
+    steps: (alias) => [
+      "Add the SSH config below to ~/.ssh/config first — Gateway reads it.",
+      "Open JetBrains Gateway → New Connection → SSH.",
+      `Select “${alias}” from the host list.`,
+    ],
+  },
+];
 
 /** Pulls the human `message` out of the API's `{ error, message }` bodies. */
 function apiErrorMessage(err: unknown, fallback: string): string {
@@ -53,6 +96,11 @@ export default function DashboardPage() {
   const [importing, setImporting] = useState<number | null>(null);
   const [startingProject, setStartingProject] = useState<string | null>(null);
   const [stoppingWorkspace, setStoppingWorkspace] = useState<string | null>(null);
+  const [connectFor, setConnectFor] = useState<string | null>(null);
+  const [connectData, setConnectData] = useState<ConnectResponse | null>(null);
+  const [connectLoading, setConnectLoading] = useState(false);
+  const [selectedIde, setSelectedIde] = useState<IdeId>("vscode");
+  const [copied, setCopied] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pollingRef = useRef<Set<string>>(new Set());
@@ -221,6 +269,61 @@ export default function DashboardPage() {
     }
   }
 
+  async function openConnect(workspaceId: string) {
+    setConnectFor(workspaceId);
+    setConnectData(null);
+    setConnectLoading(true);
+    setError(null);
+    try {
+      const data = await api<ConnectResponse>(
+        `/workspaces/${workspaceId}/connect`,
+        { method: "POST" },
+      );
+      setConnectData(data);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        router.replace("/");
+        return;
+      }
+      setError(apiErrorMessage(err, "Could not set up the IDE connection."));
+      setConnectFor(null);
+    } finally {
+      setConnectLoading(false);
+    }
+  }
+
+  function closeConnect() {
+    setConnectFor(null);
+    setConnectData(null);
+    setCopied(null);
+  }
+
+  async function copyText(text: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(label);
+      window.setTimeout(
+        () => setCopied((current) => (current === label ? null : current)),
+        1500,
+      );
+    } catch {
+      setError("Could not copy to clipboard.");
+    }
+  }
+
+  function downloadKey() {
+    if (!connectData) return;
+    const blob = new Blob([connectData.privateKey], {
+      type: "application/octet-stream",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = connectData.hostAlias;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function logout() {
     try {
       await api("/auth/logout", { method: "POST" });
@@ -247,16 +350,12 @@ export default function DashboardPage() {
     if (ws?.status === "RUNNING") {
       return (
         <span className={styles.wsControls}>
-          {ws.previewUrl && (
-            <a
-              className={styles.openIdeBtn}
-              href={ws.previewUrl}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Open IDE ↗
-            </a>
-          )}
+          <button
+            className={styles.connectBtn}
+            onClick={() => openConnect(ws.id)}
+          >
+            Connect…
+          </button>
           <button
             className={styles.stopBtn}
             disabled={stopping}
@@ -295,6 +394,7 @@ export default function DashboardPage() {
   const filteredRepos = repos.filter((repo) =>
     repo.fullName.toLowerCase().includes(search.trim().toLowerCase()),
   );
+  const activeIde = IDES.find((ide) => ide.id === selectedIde) ?? IDES[0]!;
 
   return (
     <div className={styles.page}>
@@ -441,6 +541,100 @@ export default function DashboardPage() {
           )}
         </section>
       </main>
+
+      {connectFor && (
+        <div className={styles.modalOverlay} onClick={closeConnect}>
+          <div
+            className={styles.modal}
+            role="dialog"
+            aria-modal="true"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className={styles.modalHead}>
+              <h3>Connect your IDE</h3>
+              <button
+                className={styles.modalClose}
+                onClick={closeConnect}
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            {connectLoading ? (
+              <div className={styles.modalLoading}>
+                <span className={styles.spinnerSmall} />
+                Issuing an SSH key…
+              </div>
+            ) : (
+              connectData && (
+                <>
+                  <div className={styles.ideChips}>
+                    {IDES.map((ide) => (
+                      <button
+                        key={ide.id}
+                        className={`${styles.ideChip} ${
+                          selectedIde === ide.id ? styles.ideChipActive : ""
+                        }`}
+                        onClick={() => setSelectedIde(ide.id)}
+                      >
+                        {ide.name}
+                      </button>
+                    ))}
+                  </div>
+
+                  <ol className={styles.steps}>
+                    {activeIde.steps(connectData.hostAlias).map((step) => (
+                      <li key={step}>{step}</li>
+                    ))}
+                  </ol>
+
+                  <div className={styles.connBlock}>
+                    <div className={styles.connBlockHead}>
+                      <span>1. Add to your SSH config</span>
+                      <button
+                        className={styles.copyBtn}
+                        onClick={() => copyText(connectData.sshConfig, "config")}
+                      >
+                        {copied === "config" ? "Copied ✓" : "Copy"}
+                      </button>
+                    </div>
+                    <pre className={styles.codeBlock}>{connectData.sshConfig}</pre>
+                  </div>
+
+                  <div className={styles.connBlock}>
+                    <div className={styles.connBlockHead}>
+                      <span>2. Download your key</span>
+                      <button className={styles.copyBtn} onClick={downloadKey}>
+                        Download key
+                      </button>
+                    </div>
+                    <p className={styles.keyNote}>
+                      Move it to <code>~/.ssh/{connectData.hostAlias}</code> and
+                      run <code>chmod 600</code> on it. One key per connection:
+                      it is replaced on the next Connect and revoked when the
+                      workspace stops.
+                    </p>
+                  </div>
+
+                  <div className={styles.connBlock}>
+                    <div className={styles.connBlockHead}>
+                      <span>3. Or connect straight from a terminal</span>
+                      <button
+                        className={styles.copyBtn}
+                        onClick={() => copyText(connectData.command, "command")}
+                      >
+                        {copied === "command" ? "Copied ✓" : "Copy"}
+                      </button>
+                    </div>
+                    <pre className={styles.codeBlock}>{connectData.command}</pre>
+                  </div>
+                </>
+              )
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

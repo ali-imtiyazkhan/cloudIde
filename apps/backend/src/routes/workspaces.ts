@@ -2,10 +2,12 @@ import { mkdir } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { Router } from "express";
 import { prisma, type WorkspaceStatus } from "@repo/db";
+import type Docker from "dockerode";
 import { decrypt } from "../crypto";
 import { fail } from "../lib/http";
 import { getDocker } from "../lib/docker";
 import { cloneRepository } from "../lib/git";
+import { generateSshKeyPair } from "../lib/ssh";
 import { getEnv } from "../lib/env";
 import { getSession } from "../session";
 import {
@@ -17,6 +19,37 @@ import {
 export const workspacesRouter = Router();
 
 const ACTIVE: WorkspaceStatus[] = ["PENDING", "PROVISIONING", "STARTING", "RUNNING"];
+
+const AUTH_KEYS_PATH = "/home/coder/.ssh/authorized_keys";
+
+/** Matches the exact shape ssh-keygen emits — required before interpolating into a shell string. */
+const OPENSSH_PUBLIC_KEY = /^ssh-ed25519 [A-Za-z0-9+/=]+ [A-Za-z0-9@._-]+$/;
+
+/**
+ * Overwrites authorized_keys inside the container, so there is exactly one
+ * active IDE-connection key per workspace: each "Connect" replaces the
+ * previous key, and Stop wipes the file entirely.
+ */
+async function setAuthorizedKeys(container: Docker.Container, publicKey: string) {
+  const execObj = await container.exec({
+    Cmd: ["/bin/sh", "-c", `printf '%s\\n' '${publicKey}' > ${AUTH_KEYS_PATH}`],
+    User: "coder",
+    AttachStdout: true,
+    AttachStderr: true,
+  });
+
+  const stream = await execObj.start({ hijack: false, stdin: false });
+  await new Promise<void>((resolve) => {
+    stream.on("data", () => {});
+    stream.on("end", () => resolve());
+    stream.on("error", () => resolve());
+  });
+
+  const info = await execObj.inspect();
+  if (info.ExitCode !== 0) {
+    throw new Error(`authorized_keys update exited with ${info.ExitCode}`);
+  }
+}
 
 /** Resolves the workspace mount and refuses anything outside STORAGE_ROOT. */
 async function resolveMount(storagePrefix: string) {
@@ -93,13 +126,14 @@ workspacesRouter.post("/", async (req, res) => {
     }
 
     const portKey = `${env.WORKSPACE_INTERNAL_PORT}/tcp`;
+    const sshKey = `${env.WORKSPACE_SSH_INTERNAL_PORT}/tcp`;
 
     const container = await getDocker().createContainer({
       Image: env.WORKSPACE_IMAGE,
       // workspace.id is a UUID, so this can never collide or inject.
       name: `cloudide-ws-${workspace.id}`,
       User: "coder",
-      ExposedPorts: { [portKey]: {} },
+      ExposedPorts: { [portKey]: {}, [sshKey]: {} },
       Env: [
         "PASSWORD=coder",
         "AUTH=none",
@@ -114,7 +148,12 @@ workspacesRouter.post("/", async (req, res) => {
       HostConfig: {
         // Loopback only. Publishing 0.0.0.0 hands an unauthenticated
         // code-server shell to anyone who can reach the port.
-        PortBindings: { [portKey]: [{ HostIp: env.WORKSPACE_BIND_IP, HostPort: "" }] },
+        PortBindings: {
+          [portKey]: [{ HostIp: env.WORKSPACE_BIND_IP, HostPort: "" }],
+          // SSH for "Connect to VS Code / Cursor / Antigravity" — also
+          // loopback-only; auth is the ephemeral key issued by the API.
+          [sshKey]: [{ HostIp: env.WORKSPACE_BIND_IP, HostPort: "" }],
+        },
         Binds: [`${hostPath}:/workspace`],
         NanoCpus: cpuLimit * 1_000_000_000,
         Memory: memoryLimitMb * 1024 * 1024,
@@ -231,6 +270,80 @@ workspacesRouter.get("/:id/status", async (req, res) => {
   }
 });
 
+workspacesRouter.post("/:id/connect", async (req, res) => {
+  const session = await getSession(req.cookies?.session);
+  if (!session) return fail(res, 401, "unauthorized", "Sign in to continue.");
+
+  const id = workspaceIdSchema.safeParse(req.params.id);
+  if (!id.success) return fail(res, 400, "invalid_id", "Invalid workspace id.");
+
+  const workspace = await prisma.workspace.findFirst({
+    where: { id: id.data, userId: session.user.id },
+    include: { container: true },
+  });
+  if (!workspace) return fail(res, 404, "workspace_not_found", "Workspace not found.");
+  if (!workspace.container) return fail(res, 409, "no_container", "Workspace has no container.");
+
+  const env = getEnv();
+  const container = getDocker().getContainer(workspace.container.dockerId);
+
+  let running: boolean;
+  let sshHostPort: string | undefined;
+  try {
+    const info = await container.inspect();
+    running = info.State.Running;
+    sshHostPort = info.NetworkSettings.Ports?.[`${env.WORKSPACE_SSH_INTERNAL_PORT}/tcp`]?.[0]?.HostPort;
+  } catch (error) {
+    console.error("connect: container inspect failed:", error);
+    return fail(res, 502, "docker_unreachable", "Could not reach the Docker daemon.");
+  }
+
+  if (!running) return fail(res, 409, "not_running", "Start the workspace first.");
+  if (!sshHostPort) {
+    return fail(
+      res,
+      409,
+      "ssh_unavailable",
+      "This workspace has no SSH port. Delete it and start a fresh one.",
+    );
+  }
+
+  const alias = `cloudide-${workspace.id.slice(0, 8)}`;
+  const { privateKey, publicKey } = await generateSshKeyPair(`cloudide-${workspace.id}`);
+
+  if (!OPENSSH_PUBLIC_KEY.test(publicKey)) {
+    console.error("connect: unexpected public key format");
+    return fail(res, 500, "ssh_key_error", "Could not generate an SSH key.");
+  }
+
+  try {
+    // One active key per workspace — issuing a new one revokes the last.
+    await setAuthorizedKeys(container, publicKey);
+  } catch (error) {
+    console.error("connect: injecting authorized_keys failed:", error);
+    return fail(res, 502, "ssh_setup_failed", "Could not configure SSH access to the workspace.");
+  }
+
+  return res.json({
+    host: env.WORKSPACE_BIND_IP,
+    port: Number(sshHostPort),
+    user: "coder",
+    hostAlias: alias,
+    privateKey,
+    publicKey,
+    command: `ssh -i ~/.ssh/${alias} -p ${sshHostPort} coder@${env.WORKSPACE_BIND_IP}`,
+    sshConfig: [
+      `Host ${alias}`,
+      `  HostName ${env.WORKSPACE_BIND_IP}`,
+      `  Port ${sshHostPort}`,
+      "  User coder",
+      `  IdentityFile ~/.ssh/${alias}`,
+      "  StrictHostKeyChecking accept-new",
+    ].join("\n"),
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+  });
+});
+
 workspacesRouter.post("/:id/stop", async (req, res) => {
   const session = await getSession(req.cookies?.session);
   if (!session) return fail(res, 401, "unauthorized", "Sign in to continue.");
@@ -247,6 +360,10 @@ workspacesRouter.post("/:id/stop", async (req, res) => {
 
   try {
     const container = getDocker().getContainer(workspace.container.dockerId);
+
+    // Revoke outstanding IDE-connection keys before the box goes down.
+    await setAuthorizedKeys(container, "").catch(() => undefined);
+
     await container.stop({ t: 10 });
 
     const info = await container.inspect();
