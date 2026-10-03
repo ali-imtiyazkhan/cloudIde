@@ -4,6 +4,7 @@ import express from "express";
 import { getEnv } from "./lib/env";
 import { authRouter } from "./routes/auth";
 import { meRouter } from "./routes/me";
+import { projectsRouter } from "./routes/projects";
 import { reposRouter } from "./routes/repos";
 
 const env = getEnv();
@@ -21,6 +22,7 @@ app.get("/health", (_req, res) => {
 app.use("/auth", authRouter);
 app.use("/auth", meRouter);
 app.use("/repos", reposRouter);
+app.use("/projects", projectsRouter);
 
 app.use(
   (

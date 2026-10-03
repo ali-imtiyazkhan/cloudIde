@@ -1,242 +1,207 @@
-import { Router } from "express";
 import { randomUUID } from "node:crypto";
+import { Router, type Request, type Response } from "express";
 import { prisma } from "@repo/db";
-import { getSession } from "../session";
 import { decrypt } from "../crypto";
-import { importRepoSchema } from "../validations";
+import { fail } from "../lib/http";
+import { getSession } from "../session";
+import { importRepoSchema, listReposQuerySchema } from "../validations";
 
 export const reposRouter = Router();
 
 type GitHubRepo = {
-    id: number;
-    name: string;
-    full_name: string;
-    html_url: string;
-    clone_url: string;
-    description: string | null;
-    private: boolean;
-    fork: boolean;
-    default_branch: string;
-    language: string | null;
-    stargazers_count: number;
-    forks_count: number;
-    pushed_at: string | null;
+  id: number;
+  name: string;
+  full_name: string;
+  html_url: string;
+  clone_url: string;
+  description: string | null;
+  private: boolean;
+  fork: boolean;
+  default_branch: string;
+  language: string | null;
+  stargazers_count: number;
+  forks_count: number;
+  pushed_at: string | null;
+  owner: { login: string };
 };
 
+type GithubHeaders = Record<string, string>;
+
+async function requireSession(req: Request, res: Response) {
+  const session = await getSession(req.cookies?.session);
+  if (!session) {
+    fail(res, 401, "unauthorized", "Sign in to continue.");
+    return null;
+  }
+
+  const githubAccount = session.user.githubAccounts[0];
+  if (!githubAccount) {
+    fail(res, 403, "no_github_account", "No GitHub account is linked.");
+    return null;
+  }
+
+  return { session, githubAccount };
+}
+
+function githubHeaders(accessToken: string): GithubHeaders {
+  return {
+    authorization: `Bearer ${accessToken}`,
+    accept: "application/vnd.github+json",
+    "user-agent": "CloudIDE",
+    "x-github-api-version": "2022-11-28",
+  };
+}
+
 reposRouter.get("/", async (req, res) => {
-    try {
-        const session = await getSession(req.cookies.session);
-        if (!session) {
-            return res.status(401).json({ error: "unauthorized" });
-        }
+  const ctx = await requireSession(req, res);
+  if (!ctx) return;
 
-        const githubAccount = session.user.githubAccounts[0];
-        if (!githubAccount) {
-            return res.status(403).json({ error: "no_github_account" });
-        }
+  const query = listReposQuerySchema.safeParse(req.query);
+  if (!query.success) {
+    return fail(res, 400, "invalid_query", "Unsupported pagination or sort options.");
+  }
 
-        const accessToken = decrypt(githubAccount.accessTokenEnc);
+  const { type, sort, direction, page, per_page } = query.data;
+  const params = new URLSearchParams({
+    type,
+    sort,
+    direction,
+    page: String(page),
+    per_page: String(per_page),
+  });
 
-        const type = typeof req.query.type === "string" ? req.query.type : "all";
-        const sort = typeof req.query.sort === "string" ? req.query.sort : "updated";
-        const direction = typeof req.query.direction === "string" ? req.query.direction : "desc";
-        const page = typeof req.query.page === "string" ? parseInt(req.query.page, 10) : 1;
-        const perPage = typeof req.query.per_page === "string" ? parseInt(req.query.per_page, 10) : 30;
+  const githubRes = await fetch(`https://api.github.com/user/repos?${params}`, {
+    headers: githubHeaders(decrypt(ctx.githubAccount.accessTokenEnc)),
+  });
 
-        const validPage = Math.max(1, page);
-        const validPerPage = Math.min(100, Math.max(1, perPage));
+  if (!githubRes.ok) {
+    console.error("GitHub API error:", githubRes.status, githubRes.statusText);
+    return fail(res, 502, "github_api_error", "Could not reach GitHub.");
+  }
 
-        const params = new URLSearchParams({
-            type,
-            sort,
-            direction,
-            page: validPage.toString(),
-            per_page: validPerPage.toString(),
-        });
+  const repos = (await githubRes.json()) as GitHubRepo[];
+  const hasMore = (githubRes.headers.get("link") ?? "").includes('rel="next"');
 
-        const githubRes = await fetch(`https://api.github.com/user/repos?${params}`, {
-            headers: {
-                Authorization: `Bearer ${accessToken}`,
-                Accept: "application/vnd.github+json",
-                "User-Agent": "CloudIDE",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-        });
-
-        if (!githubRes.ok) {
-            console.error("GitHub API error:", githubRes.status, githubRes.statusText);
-            return res.status(502).json({ error: "github_api_error" });
-        }
-
-        const repos = (await githubRes.json()) as GitHubRepo[];
-
-        const linkHeader = githubRes.headers.get("link") ?? "";
-        const hasMore = linkHeader.includes('rel="next"');
-
-        const transformedRepos = repos.map((repo) => ({
-            id: repo.id,
-            name: repo.name,
-            fullName: repo.full_name,
-            htmlUrl: repo.html_url,
-            cloneUrl: repo.clone_url,
-            description: repo.description,
-            visibility: repo.private ? "PRIVATE" : "PUBLIC",
-            isFork: repo.fork,
-            defaultBranch: repo.default_branch,
-            language: repo.language,
-            stargazersCount: repo.stargazers_count,
-            forksCount: repo.forks_count,
-            pushedAt: repo.pushed_at,
-        }));
-
-        return res.json({
-            repos: transformedRepos,
-            pagination: {
-                page: validPage,
-                perPage: validPerPage,
-                hasMore,
-            },
-        });
-    } catch (error) {
-        console.error("Error fetching repos:", error);
-        return res.status(500).json({ error: "internal_error" });
-    }
+  return res.json({
+    repos: repos.map((repo) => ({
+      id: repo.id,
+      name: repo.name,
+      fullName: repo.full_name,
+      htmlUrl: repo.html_url,
+      cloneUrl: repo.clone_url,
+      description: repo.description,
+      visibility: repo.private ? "PRIVATE" : "PUBLIC",
+      isFork: repo.fork,
+      defaultBranch: repo.default_branch,
+      language: repo.language,
+      stargazersCount: repo.stargazers_count,
+      forksCount: repo.forks_count,
+      pushedAt: repo.pushed_at,
+    })),
+    pagination: { page, perPage: per_page, hasMore },
+  });
 });
 
 reposRouter.post("/repo", async (req, res) => {
-    try {
-        const session = await getSession(req.cookies.session);
-        if (!session) {
-            return res.status(401).json({ message: "Unauthorised Access" });
-        }
+  const ctx = await requireSession(req, res);
+  if (!ctx) return;
 
-        const githubAccount = session.user.githubAccounts[0];
-        if (!githubAccount) {
-            return res.status(403).json({ message: "Forbidden Access" });
-        }
+  const parsed = importRepoSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return fail(
+      res,
+      400,
+      "invalid_body",
+      parsed.error.issues[0]?.message ?? "Invalid request body.",
+    );
+  }
 
-        // 1. Validate body FIRST (fullName is needed below)
-        const parsed = importRepoSchema.safeParse(req.body);
-        if (!parsed.success) {
-            return res.status(400).json({
-                message: "Invalid Request Body",
-                errors: parsed.error.flatten().fieldErrors,
-            });
-        }
+  const { fullName } = parsed.data;
 
-        const {
-            githubId,
-            name,
-            fullName,
-            htmlUrl,
-            cloneUrl,
-            description,
-            visibility,
-            isFork,
-            defaultBranch,
-        } = parsed.data;
+  // GitHub is the source of truth for every field we persist. Nothing from
+  // the request body is trusted beyond the repository name.
+  const githubRes = await fetch(`https://api.github.com/repos/${fullName}`, {
+    headers: githubHeaders(decrypt(ctx.githubAccount.accessTokenEnc)),
+  });
 
-        const owner = fullName.split("/")[0];
-        if (!owner) {
-            return res.status(400).json({
-                message: "fullName must be in format: owner/name",
-            });
-        }
+  if (githubRes.status === 404) {
+    return fail(res, 404, "repo_not_found", "Repository not found on GitHub.");
+  }
+  if (!githubRes.ok) {
+    return fail(res, 502, "github_api_error", "Could not reach GitHub.");
+  }
 
-        // 2. Reject duplicates
-        const existing = await prisma.repository.findFirst({
-            where: {
-                userId: session.user.id,
-                OR: [{ githubId: BigInt(githubId) }, { fullName }],
-            },
-        });
+  const repo = (await githubRes.json()) as GitHubRepo;
+  const githubId = BigInt(repo.id);
 
-        if (existing) {
-            return res.status(409).json({
-                message: "Repository already exists",
-                repositoryId: existing.id,
-            });
-        }
+  const existing = await prisma.repository.findFirst({
+    where: {
+      userId: ctx.session.user.id,
+      OR: [{ githubId }, { fullName: repo.full_name }],
+    },
+    select: { id: true },
+  });
 
-        // 3. Verify repo exists on GitHub
-        const accessToken = decrypt(githubAccount.accessTokenEnc);
+  if (existing) {
+    return fail(res, 409, "repo_already_imported", "Repository already exists.");
+  }
 
-        const githubRes = await fetch(`https://api.github.com/repos/${fullName}`, {
-            headers: {
-                Authorization: `Bearer ${accessToken}`,
-                Accept: "application/vnd.github+json",
-                "User-Agent": "CloudIDE",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-        });
+  const projectId = randomUUID();
 
-        if (!githubRes.ok) {
-            return res.status(404).json({
-                message: "Repository not found on GitHub",
-                error: await githubRes.text(),
-            });
-        }
+  const { repository, project } = await prisma.$transaction(async (tx) => {
+    const created = await tx.repository.create({
+      data: {
+        userId: ctx.session.user.id,
+        githubId,
+        owner: repo.owner.login,
+        name: repo.name,
+        fullName: repo.full_name,
+        htmlUrl: repo.html_url,
+        cloneUrl: repo.clone_url,
+        defaultBranch: repo.default_branch,
+        description: repo.description,
+        visibility: repo.private ? "PRIVATE" : "PUBLIC",
+        isFork: repo.fork,
+        pushedAt: repo.pushed_at ? new Date(repo.pushed_at) : null,
+      },
+    });
 
-        // 4. Create Repository + Project atomically
-        const projectId = randomUUID();
+    const createdProject = await tx.project.create({
+      data: {
+        id: projectId,
+        userId: ctx.session.user.id,
+        repositoryId: created.id,
+        name: repo.name,
+        description: repo.description,
+        branch: repo.default_branch,
+        storagePrefix: `projects/${projectId}`,
+      },
+    });
 
-        const result = await prisma.$transaction(async (tx) => {
-            const repository = await tx.repository.create({
-                data: {
-                    userId: session.user.id,
-                    githubId: BigInt(githubId),
-                    owner,
-                    name,
-                    fullName,
-                    htmlUrl,
-                    cloneUrl,
-                    defaultBranch,
-                    description: description ?? null,
-                    visibility,
-                    isFork,
-                },
-            });
+    return { repository: created, project: createdProject };
+  });
 
-            const project = await tx.project.create({
-                data: {
-                    id: projectId,
-                    userId: session.user.id,
-                    repositoryId: repository.id,
-                    name,
-                    branch: defaultBranch,
-                    storagePrefix: `projects/${projectId}`,
-                },
-            });
-
-            return { repository, project };
-        });
-
-        // 5. Respond
-        return res.status(201).json({
-            message: "Repository imported",
-            repository: {
-                id: result.repository.id,
-                githubId: Number(result.repository.githubId),
-                name: result.repository.name,
-                fullName: result.repository.fullName,
-                htmlUrl: result.repository.htmlUrl,
-                cloneUrl: result.repository.cloneUrl,
-                description: result.repository.description,
-                visibility: result.repository.visibility,
-                isFork: result.repository.isFork,
-                defaultBranch: result.repository.defaultBranch,
-                createdAt: result.repository.createdAt,
-            },
-            project: {
-                id: result.project.id,
-                name: result.project.name,
-                branch: result.project.branch,
-                storagePrefix: result.project.storagePrefix,
-                createdAt: result.project.createdAt,
-            },
-        });
-    } catch (error) {
-        console.error(error);
-        return res.status(500).json({ message: "Internal Server Error" });
-    }
+  return res.status(201).json({
+    repository: {
+      id: repository.id,
+      githubId: Number(repository.githubId),
+      owner: repository.owner,
+      name: repository.name,
+      fullName: repository.fullName,
+      htmlUrl: repository.htmlUrl,
+      cloneUrl: repository.cloneUrl,
+      defaultBranch: repository.defaultBranch,
+      description: repository.description,
+      visibility: repository.visibility,
+      isFork: repository.isFork,
+      createdAt: repository.createdAt,
+    },
+    project: {
+      id: project.id,
+      name: project.name,
+      branch: project.branch,
+      storagePrefix: project.storagePrefix,
+      createdAt: project.createdAt,
+    },
+  });
 });

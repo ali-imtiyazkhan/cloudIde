@@ -7,6 +7,18 @@ const schema = z.object({
   GITHUB_CLIENT_SECRET: z.string().min(1),
   GITHUB_REDIRECT_URI: z.url(),
   CRYPTO_KEY: z.string().min(1),
+
+  DOCKER_SOCKET: z.string().min(1).default("/var/run/docker.sock"),
+  WORKSPACE_IMAGE: z.string().min(1).default("ghcr.io/coder/code-server:latest"),
+  // Loopback only. code-server runs with AUTH=none, so 0.0.0.0 would expose
+  // an unauthenticated shell to anyone who can reach the port.
+  WORKSPACE_BIND_IP: z.string().min(1).default("127.0.0.1"),
+  WORKSPACE_INTERNAL_PORT: z.coerce.number().int().min(1).max(65535).default(8080),
+  STORAGE_ROOT: z.string().min(1).default(".workspaces"),
+  WORKSPACE_CPU_LIMIT: z.coerce.number().int().min(1).max(16).default(2),
+  WORKSPACE_MEMORY_LIMIT_MB: z.coerce.number().int().min(512).max(32768).default(4096),
+  WORKSPACE_DISK_LIMIT_MB: z.coerce.number().int().min(1024).max(204800).default(20480),
+  MAX_ACTIVE_WORKSPACES: z.coerce.number().int().min(1).max(50).default(5),
 });
 
 let cachedEnv: z.infer<typeof schema> | undefined;

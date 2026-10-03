@@ -1,58 +1,26 @@
-// apps/backend/src/validations/repos.ts
-
 import { z } from "zod";
 
+/**
+ * The owner segment must start alphanumeric or with an underscore so that
+ * values like ".." can never reach the GitHub API URL path.
+ */
+const FULL_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]*\/[A-Za-z0-9._-]+$/;
+
 export const importRepoSchema = z.object({
-    githubId: z
-        .number()
-        .int()
-        .positive()
-        .describe("GitHub repository ID"),
+  fullName: z
+    .string()
+    .max(200)
+    .regex(FULL_NAME, "Must be in format: owner/name")
+    .describe("Repository to import (e.g. 'ali-imtiyazkhan/cloudIde')"),
+});
 
-    name: z
-        .string()
-        .min(1)
-        .max(100)
-        .describe("Repository name (e.g., 'my-project')"),
-
-    fullName: z
-        .string()
-        .min(3)
-        .max(200)
-        .regex(/^[^/]+\/[^/]+$/, "Must be in format: owner/name")
-        .describe("Full repository name (e.g., 'username/my-project')"),
-
-    htmlUrl: z
-        .string()
-        .url()
-        .describe("GitHub repository URL"),
-
-    cloneUrl: z
-        .string()
-        .url()
-        .regex(/\.git$/, "Must end with .git")
-        .describe("Git clone URL"),
-
-    description: z
-        .string()
-        .max(500)
-        .nullable()
-        .optional()
-        .describe("Repository description (optional)"),
-
-    visibility: z
-        .enum(["PUBLIC", "PRIVATE"])
-        .describe("Repository visibility"),
-
-    isFork: z
-        .boolean()
-        .describe("Whether repository is a fork"),
-
-    defaultBranch: z
-        .string()
-        .min(1)
-        .max(100)
-        .describe("Default branch name"),
+export const listReposQuerySchema = z.object({
+  type: z.enum(["all", "owner", "member", "public", "private"]).default("all"),
+  sort: z.enum(["created", "updated", "pushed", "full_name"]).default("updated"),
+  direction: z.enum(["asc", "desc"]).default("desc"),
+  page: z.coerce.number().int().min(1).max(1000).default(1),
+  per_page: z.coerce.number().int().min(1).max(100).default(30),
 });
 
 export type ImportRepoInput = z.infer<typeof importRepoSchema>;
+export type ListReposQuery = z.infer<typeof listReposQuerySchema>;
