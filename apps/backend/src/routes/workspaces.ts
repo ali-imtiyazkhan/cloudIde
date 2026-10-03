@@ -2,8 +2,10 @@ import { mkdir } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { Router } from "express";
 import { prisma, type WorkspaceStatus } from "@repo/db";
+import { decrypt } from "../crypto";
 import { fail } from "../lib/http";
 import { getDocker } from "../lib/docker";
+import { cloneRepository } from "../lib/git";
 import { getEnv } from "../lib/env";
 import { getSession } from "../session";
 import {
@@ -34,6 +36,9 @@ workspacesRouter.post("/", async (req, res) => {
   const session = await getSession(req.cookies?.session);
   if (!session) return fail(res, 401, "unauthorized", "Sign in to continue.");
 
+  const githubAccount = session.user.githubAccounts[0];
+  if (!githubAccount) return fail(res, 403, "no_github_account", "No GitHub account is linked.");
+
   const parsed = createWorkspaceSchema.safeParse(req.body);
   if (!parsed.success) {
     return fail(res, 400, "invalid_body", parsed.error.issues[0]?.message ?? "Invalid request body.");
@@ -43,7 +48,12 @@ workspacesRouter.post("/", async (req, res) => {
 
   const project = await prisma.project.findFirst({
     where: { id: parsed.data.projectId, userId: session.user.id },
-    select: { id: true, name: true, storagePrefix: true },
+    select: {
+      id: true,
+      name: true,
+      storagePrefix: true,
+      repository: { select: { cloneUrl: true, fullName: true } },
+    },
   });
   if (!project) return fail(res, 404, "project_not_found", "Project not found.");
 
@@ -64,6 +74,24 @@ workspacesRouter.post("/", async (req, res) => {
 
   try {
     const hostPath = await resolveMount(project.storagePrefix);
+
+    // The storage directory starts empty — put the repository in it before
+    // the container mounts it, so /workspace opens with the project's code.
+    try {
+      await cloneRepository({
+        cloneUrl: project.repository.cloneUrl,
+        token: decrypt(githubAccount.accessTokenEnc),
+        destDir: hostPath,
+      });
+    } catch (error) {
+      console.error(`clone of ${project.repository.fullName} failed:`, error);
+      await prisma.workspace.update({
+        where: { id: workspace.id },
+        data: { status: "FAILED" },
+      });
+      return fail(res, 502, "clone_failed", "Could not clone the repository into the workspace.");
+    }
+
     const portKey = `${env.WORKSPACE_INTERNAL_PORT}/tcp`;
 
     const container = await getDocker().createContainer({
