@@ -3,10 +3,6 @@ import { getSession } from "../session";
 
 export const meRouter = Router();
 
-/**
- * Not being signed in is a valid answer here, not an error, so this always
- * returns 200. The frontend can render either state without a try/catch.
- */
 meRouter.get("/me", async (req, res) => {
   const session = await getSession(req.cookies?.session);
 
