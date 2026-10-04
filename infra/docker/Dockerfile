@@ -17,8 +17,10 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /run/sshd
 
-COPY sshd_config /etc/ssh/sshd_config
-COPY entrypoint.sh /usr/local/bin/cloudide-entrypoint.sh
+# COPY paths are relative to the build context (the repo root), not to this
+# Dockerfile — hence the infra/docker/ prefix.
+COPY infra/docker/sshd_config /etc/ssh/sshd_config
+COPY infra/docker/entrypoint.sh /usr/local/bin/cloudide-entrypoint.sh
 RUN chmod +x /usr/local/bin/cloudide-entrypoint.sh
 
 USER coder

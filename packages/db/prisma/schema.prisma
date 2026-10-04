@@ -165,7 +165,8 @@ model Workspace {
   projectId     String          @db.Uuid
   status        WorkspaceStatus @default(PENDING)
  
-  containerId   String?         @unique @db.Uuid
+  // Docker container id (64 hex chars), not a UUID — @db.Uuid rejects it with P2023.
+  containerId   String?         @unique
   previewUrl    String?
   cpuLimit      Int?            @default(2)
   memoryLimitMb Int?            @default(4096)

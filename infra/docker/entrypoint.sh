@@ -15,4 +15,8 @@ chmod 600 "$HOME/.ssh/authorized_keys"
 sudo /usr/sbin/sshd
 
 # Hand off to the stock entrypoint: fixuid → entrypoint.d → code-server.
-exec /usr/bin/entrypoint.sh --bind-addr 0.0.0.0:8080 .
+# --auth must be passed as a flag: code-server ignores an AUTH env var, and
+# without it the generated config.yaml defaults to `auth: password`.
+# The positional arg is the folder to open: `.` would be the image WORKDIR
+# (/home/coder, i.e. dotfiles) — the cloned repo is bind-mounted at /workspace.
+exec /usr/bin/entrypoint.sh --bind-addr 0.0.0.0:8080 --auth "${AUTH:-none}" /workspace
