@@ -23,6 +23,12 @@ COPY infra/docker/sshd_config /etc/ssh/sshd_config
 COPY infra/docker/entrypoint.sh /usr/local/bin/cloudide-entrypoint.sh
 RUN chmod +x /usr/local/bin/cloudide-entrypoint.sh
 
+# The base image leaves the coder account locked ("!" in /etc/shadow). With
+# UsePAM no, OpenSSH rejects EVERY auth method — public keys included — for a
+# locked account: "User coder not allowed because account is locked".
+# "*" means "no password set" without locking the account, so pubkey auth works.
+RUN usermod -p '*' coder
+
 USER coder
 
 # Replaces the stock entrypoint: start sshd first, then hand off to the
