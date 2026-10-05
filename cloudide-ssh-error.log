@@ -1,0 +1,63 @@
+# CloudIDE SSH Connection Log
+# Host: cloudide-8b8722f0 (127.0.0.1)  |  User: coder
+# Local config: ~/.ssh/config  |  Key: ~/.ssh/cloudide-8b8722f0
+# Append new incidents below, newest last.
+
+================================================================
+[2026-10-05 00:00] INCIDENT: SSH auth failure after workspace reconnect
+================================================================
+
+SYMPTOM
+  $ ssh -o BatchMode=yes cloudide-8b8722f0
+  coder@127.0.0.1: Permission denied (publickey).
+
+  $ ssh -v cloudide-8b8722f0
+  debug1: identity file /Users/wel/.ssh/cloudide-8b8722f0 type 2
+  debug1: Authentications that can continue: publickey
+  debug1: Offering public key: /Users/wel/.ssh/cloudide-8b8722f0 ED25519
+          SHA256:mSDn4FrZLpuMg+R8irGs8BR+gKabmmVMzE4DdclBtCk explicit
+  debug1: Authentications that can continue: publickey
+  coder@127.0.0.1: Permission denied (publickey).
+
+ROOT CAUSE (two concurrent faults)
+  1. STALE PORT
+     ~/.ssh/config had   Port 54257   (from previous Connect session)
+     Workspace now on    Port 50274
+     Verified: nc 127.0.0.1 50274 -> OPEN ; nc 127.0.0.1 54257 -> CLOSED
+
+  2. REVOKED KEY
+     Key file was well-formed (valid OPENSSH PRIVATE KEY, ed25519, 0600)
+     but rejected by the server. Per CloudIDE docs:
+       "One key per connection: it is replaced on the next Connect and
+        revoked when the workspace stops."
+     Key comment showed an older session UUID:
+       cloudide-8b8722f0-5669-4c66-8ddb-8790d7c7f731
+     No fresh download was present in ~/Downloads.
+
+RESOLUTION
+  1. cp ~/.ssh/config ~/.ssh/config.bak
+  2. sed -i '' 's/Port 54257/Port 50274/' ~/.ssh/config
+  3. Download key again from CloudIDE page -> ~/Downloads/cloudide-8b8722f0
+  4. cp ~/Downloads/cloudide-8b8722f0 ~/.ssh/cloudide-8b8722f0
+  5. chmod 600 ~/.ssh/cloudide-8b8722f0
+  6. ssh -o BatchMode=yes cloudide-8b8722f0  -> SUCCESS
+
+KEY ROTATION EVIDENCE
+  before: SHA256:mSDn4FrZLpuMg+R8irGs8BR+gKabmmVMzE4DdclBtCk  (revoked)
+  after : SHA256:qvAipi0F4dY2BISL3661moM81KzklhsGfm9Dc52rDMM  (accepted)
+  comment: cloudide-8b8722f0-5669-4c66-8ddb-8790d7c7f731 (ed25519, 256)
+
+VERIFIED STATE
+  CONNECTED / host: d6ff2a48cb29 / user: coder / cwd: /home/coder
+  ~/.ssh/cloudide-8b8722f0 -> -rw-------  (0600) OK
+  ~/.ssh/config             -> -rw-r--r--
+
+IMPACT / RECURRENCE
+  BOTH port and key are re-issued on every "Connect to Host".
+  This incident WILL recur on the next reconnect unless automated.
+  TODO: helper script to rewrite port + install fresh key in one step.
+
+REMOTE STATE AT LOG TIME
+  /home/coder contains .bashrc, .profile, .cache, .config, .copilot,
+  .cursor, .cursor-server, .local, .ssh -- no project checked out yet.
+  Local project: /Users/wel/Downloads/backend

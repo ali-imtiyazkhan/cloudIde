@@ -517,11 +517,11 @@ The code never lands on the user's laptop. The client is only a renderer.
 
 Three client paths are supported. All of them talk to the same container.
 
-| Client | Transport | Target user |
-| --- | --- | --- |
-| Browser | WebSocket | No install, quick start |
+| Client           | Transport  | Target user             |
+| ---------------- | ---------- | ----------------------- |
+| Browser          | WebSocket  | No install, quick start |
 | VS Code / Cursor | Remote-SSH | Desktop IDE power users |
-| JetBrains IDEs | Gateway | Java / Go / Rust shops |
+| JetBrains IDEs   | Gateway    | Java / Go / Rust shops  |
 
 ---
 
@@ -628,13 +628,13 @@ Do not do this.
 **It is not a filesystem.** Object storage has no directories. Every IDE
 operation becomes a network round trip.
 
-| IDE operation | Network cost |
-| --- | --- |
-| File tree expansion | One request per directory |
-| `git status` | One stat per tracked file |
-| Language server | Reads tsconfig and every import |
-| `Ctrl+P` search | Walks the whole tree |
-| `node_modules` | 100,000+ files |
+| IDE operation       | Network cost                    |
+| ------------------- | ------------------------------- |
+| File tree expansion | One request per directory       |
+| `git status`        | One stat per tracked file       |
+| Language server     | Reads tsconfig and every import |
+| `Ctrl+P` search     | Walks the whole tree            |
+| `node_modules`      | 100,000+ files                  |
 
 **It loses the compute.** If the IDE runs on the laptop, `npm run dev` runs on
 the laptop. The repo is downloaded to local disk and nothing was saved. The
@@ -1154,3 +1154,4 @@ The long-term system should look like:
                          │
                          ↓
                   Suggestions / Patches
+```

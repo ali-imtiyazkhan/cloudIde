@@ -30,7 +30,11 @@ type CloneOptions = {
  * Linux host the container's `coder` user may need matching uid/GID or an
  * in-container clone — revisit when deploying off macOS.
  */
-export async function cloneRepository({ cloneUrl, token, destDir }: CloneOptions) {
+export async function cloneRepository({
+  cloneUrl,
+  token,
+  destDir,
+}: CloneOptions) {
   // A workspace restart reuses the same storage — only clone once.
   if (existsSync(join(destDir, ".git"))) return;
 
@@ -58,6 +62,8 @@ export async function cloneRepository({ cloneUrl, token, destDir }: CloneOptions
 async function emptyDir(dir: string) {
   const entries = await readdir(dir).catch(() => [] as string[]);
   await Promise.all(
-    entries.map((entry) => rm(join(dir, entry), { recursive: true, force: true })),
+    entries.map((entry) =>
+      rm(join(dir, entry), { recursive: true, force: true }),
+    ),
   );
 }

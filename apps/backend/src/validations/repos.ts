@@ -16,7 +16,9 @@ export const importRepoSchema = z.object({
 
 export const listReposQuerySchema = z.object({
   type: z.enum(["all", "owner", "member", "public", "private"]).default("all"),
-  sort: z.enum(["created", "updated", "pushed", "full_name"]).default("updated"),
+  sort: z
+    .enum(["created", "updated", "pushed", "full_name"])
+    .default("updated"),
   direction: z.enum(["asc", "desc"]).default("desc"),
   page: z.coerce.number().int().min(1).max(1000).default(1),
   per_page: z.coerce.number().int().min(1).max(100).default(30),

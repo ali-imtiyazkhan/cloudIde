@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import { api, ApiError } from "../../lib/api";
 import type {
   ConnectResponse,
@@ -18,6 +19,10 @@ import type {
 } from "../../lib/types";
 import styles from "./page.module.css";
 
+const TerminalPanel = dynamic(() => import("../../components/terminal-panel"), {
+  ssr: false,
+});
+
 const PER_PAGE = 30;
 
 /** Workspace statuses that mean "still coming up" — poll until they resolve. */
@@ -26,44 +31,45 @@ const TRANSITIONAL: WorkspaceStatus[] = ["PENDING", "PROVISIONING", "STARTING"];
 /** The user's choice of editor — all of them speak SSH Remote. */
 type IdeId = "vscode" | "cursor" | "antigravity" | "jetbrains";
 
-const IDES: { id: IdeId; name: string; steps: (alias: string) => string[] }[] = [
-  {
-    id: "vscode",
-    name: "VS Code",
-    steps: (alias) => [
-      "Install the “Remote - SSH” extension (⇧⌘X → search “Remote - SSH”).",
-      "⇧⌘P → “Remote-SSH: Connect to Host”.",
-      `Pick “${alias}” — the project opens, running in the cloud.`,
-    ],
-  },
-  {
-    id: "cursor",
-    name: "Cursor",
-    steps: (alias) => [
-      "Cursor uses the same SSH config as VS Code — nothing extra to install.",
-      "⇧⌘P → “Remote-SSH: Connect to Host”.",
-      `Pick “${alias}”.`,
-    ],
-  },
-  {
-    id: "antigravity",
-    name: "Antigravity",
-    steps: (alias) => [
-      "Antigravity connects over standard SSH as well.",
-      "Command palette → “Remote-SSH: Connect to Host”.",
-      `Pick “${alias}”.`,
-    ],
-  },
-  {
-    id: "jetbrains",
-    name: "JetBrains Gateway",
-    steps: (alias) => [
-      "Add the SSH config below to ~/.ssh/config first — Gateway reads it.",
-      "Open JetBrains Gateway → New Connection → SSH.",
-      `Select “${alias}” from the host list.`,
-    ],
-  },
-];
+const IDES: { id: IdeId; name: string; steps: (alias: string) => string[] }[] =
+  [
+    {
+      id: "vscode",
+      name: "VS Code",
+      steps: (alias) => [
+        "Install the “Remote - SSH” extension (⇧⌘X → search “Remote - SSH”).",
+        "⇧⌘P → “Remote-SSH: Connect to Host”.",
+        `Pick “${alias}” — the project opens, running in the cloud.`,
+      ],
+    },
+    {
+      id: "cursor",
+      name: "Cursor",
+      steps: (alias) => [
+        "Cursor uses the same SSH config as VS Code — nothing extra to install.",
+        "⇧⌘P → “Remote-SSH: Connect to Host”.",
+        `Pick “${alias}”.`,
+      ],
+    },
+    {
+      id: "antigravity",
+      name: "Antigravity",
+      steps: (alias) => [
+        "Antigravity connects over standard SSH as well.",
+        "Command palette → “Remote-SSH: Connect to Host”.",
+        `Pick “${alias}”.`,
+      ],
+    },
+    {
+      id: "jetbrains",
+      name: "JetBrains Gateway",
+      steps: (alias) => [
+        "Add the SSH config below to ~/.ssh/config first — Gateway reads it.",
+        "Open JetBrains Gateway → New Connection → SSH.",
+        `Select “${alias}” from the host list.`,
+      ],
+    },
+  ];
 
 /** Pulls the human `message` out of the API's `{ error, message }` bodies. */
 function apiErrorMessage(err: unknown, fallback: string): string {
@@ -95,10 +101,13 @@ export default function DashboardPage() {
   const [search, setSearch] = useState("");
   const [importing, setImporting] = useState<number | null>(null);
   const [startingProject, setStartingProject] = useState<string | null>(null);
-  const [stoppingWorkspace, setStoppingWorkspace] = useState<string | null>(null);
+  const [stoppingWorkspace, setStoppingWorkspace] = useState<string | null>(
+    null,
+  );
   const [connectFor, setConnectFor] = useState<string | null>(null);
   const [connectData, setConnectData] = useState<ConnectResponse | null>(null);
   const [connectLoading, setConnectLoading] = useState(false);
+  const [terminalFor, setTerminalFor] = useState<string | null>(null);
   const [selectedIde, setSelectedIde] = useState<IdeId>("vscode");
   const [copied, setCopied] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -117,28 +126,31 @@ export default function DashboardPage() {
     }
   }, []);
 
-  const loadRepos = useCallback(async (nextPage: number) => {
-    setReposLoading(true);
-    setError(null);
-    try {
-      const data = await api<ReposResponse>(
-        `/repos?type=all&sort=updated&direction=desc&page=${nextPage}&per_page=${PER_PAGE}`,
-      );
-      setRepos((prev) =>
-        nextPage === 1 ? data.repos : [...prev, ...data.repos],
-      );
-      setPage(data.pagination.page);
-      setHasMore(data.pagination.hasMore);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 401) {
-        router.replace("/");
-        return;
+  const loadRepos = useCallback(
+    async (nextPage: number) => {
+      setReposLoading(true);
+      setError(null);
+      try {
+        const data = await api<ReposResponse>(
+          `/repos?type=all&sort=updated&direction=desc&page=${nextPage}&per_page=${PER_PAGE}`,
+        );
+        setRepos((prev) =>
+          nextPage === 1 ? data.repos : [...prev, ...data.repos],
+        );
+        setPage(data.pagination.page);
+        setHasMore(data.pagination.hasMore);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) {
+          router.replace("/");
+          return;
+        }
+        setError("Could not load your GitHub repositories.");
+      } finally {
+        setReposLoading(false);
       }
-      setError("Could not load your GitHub repositories.");
-    } finally {
-      setReposLoading(false);
-    }
-  }, [router]);
+    },
+    [router],
+  );
 
   /** Watches a workspace until it leaves the transitional states, then refreshes. */
   const pollWorkspace = useCallback(
@@ -176,7 +188,8 @@ export default function DashboardPage() {
         project.latestWorkspace &&
         TRANSITIONAL.includes(project.latestWorkspace.status),
     );
-    if (pending?.latestWorkspace) void pollWorkspace(pending.latestWorkspace.id);
+    if (pending?.latestWorkspace)
+      void pollWorkspace(pending.latestWorkspace.id);
   }, [projects, pollWorkspace]);
 
   useEffect(() => {
@@ -350,6 +363,12 @@ export default function DashboardPage() {
     if (ws?.status === "RUNNING") {
       return (
         <span className={styles.wsControls}>
+          <button
+            className={styles.connectBtn}
+            onClick={() => setTerminalFor(ws.id)}
+          >
+            Terminal
+          </button>
           <button
             className={styles.connectBtn}
             onClick={() => openConnect(ws.id)}
@@ -542,6 +561,33 @@ export default function DashboardPage() {
         </section>
       </main>
 
+      {terminalFor && (
+        <div
+          className={styles.modalOverlay}
+          onClick={() => setTerminalFor(null)}
+        >
+          <div
+            className={styles.modal}
+            style={{ maxWidth: 760 }}
+            role="dialog"
+            aria-modal="true"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className={styles.modalHead}>
+              <h3>Terminal</h3>
+              <button
+                className={styles.modalClose}
+                onClick={() => setTerminalFor(null)}
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <TerminalPanel workspaceId={terminalFor} />
+          </div>
+        </div>
+      )}
+
       {connectFor && (
         <div className={styles.modalOverlay} onClick={closeConnect}>
           <div
@@ -594,12 +640,16 @@ export default function DashboardPage() {
                       <span>1. Add to your SSH config</span>
                       <button
                         className={styles.copyBtn}
-                        onClick={() => copyText(connectData.sshConfig, "config")}
+                        onClick={() =>
+                          copyText(connectData.sshConfig, "config")
+                        }
                       >
                         {copied === "config" ? "Copied ✓" : "Copy"}
                       </button>
                     </div>
-                    <pre className={styles.codeBlock}>{connectData.sshConfig}</pre>
+                    <pre className={styles.codeBlock}>
+                      {connectData.sshConfig}
+                    </pre>
                   </div>
 
                   <div className={styles.connBlock}>
@@ -627,7 +677,9 @@ export default function DashboardPage() {
                         {copied === "command" ? "Copied ✓" : "Copy"}
                       </button>
                     </div>
-                    <pre className={styles.codeBlock}>{connectData.command}</pre>
+                    <pre className={styles.codeBlock}>
+                      {connectData.command}
+                    </pre>
                   </div>
                 </>
               )

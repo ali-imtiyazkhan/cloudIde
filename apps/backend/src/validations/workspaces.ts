@@ -9,7 +9,6 @@ export const createWorkspaceSchema = z.object({
 
 export const workspaceIdSchema = z.uuid();
 
-
 export const storagePrefixSchema = z
   .string()
   .min(1)
@@ -18,4 +17,3 @@ export const storagePrefixSchema = z
   .refine((value) => !value.includes(".."), "Invalid storage prefix");
 
 export type CreateWorkspaceInput = z.infer<typeof createWorkspaceSchema>;
-
