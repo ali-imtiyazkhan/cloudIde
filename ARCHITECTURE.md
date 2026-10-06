@@ -158,25 +158,108 @@ Development → MinIO
 Production  → Cloudflare R2 / AWS S3
 ```
 
-Possible structure:
+> **Implementation plan for build-order step 12 — designed, not yet built.**
+> Everything below describes the version to implement first; later
+> improvements (incremental sync, versioning) are called out explicitly.
+
+## 4.1 The rule: cloud is truth, disk is cache
 
 ```text
-bucket/
-│
-├── users/
-│   └── user-123/
-│
-├── repositories/
-│   └── repo-456/
-│       ├── snapshots/
-│       └── metadata/
-│
-└── workspaces/
-    └── workspace-789/
-        └── snapshots/
+TODAY   local directory is the only copy      → lose the host, lose the work
+AFTER   object storage is the source of truth → host directory is a cache
 ```
 
-Object storage is persistent.
+A running container must always write to a real local filesystem — that part
+can never be removed. What changes is authority: the local directory may be
+deleted at any time and rebuilt from the bucket.
+
+## 4.2 Object layout
+
+```text
+bucket: cloudide-snapshots
+│
+└── workspaces/
+    └── <workspaceId>/
+        └── snapshot.tar.gz      # full copy of the project directory
+```
+
+- Keyed **per workspace**, not per project: `DELETE /workspaces/:id` removes
+  that workspace's objects, while the local directory
+  (`.workspaces/projects/<storagePrefix>`) is shared by every workspace of
+  the project and must survive.
+- The original `users/` and `repositories/` branches are dropped — user and
+  repository metadata live in PostgreSQL, not in the bucket.
+
+## 4.3 Restore (BullMQ `restore` job — inside provisionWorkspace)
+
+```text
+local dir has .git?      → cache hit, use it, skip download
+else snapshot in bucket? → download + extract into the dir
+else                      → git clone (true cold start)
+```
+
+This runs **before** the container is created, because /workspace is
+bind-mounted at start. The frontend already polls PROVISIONING, so the
+download time needs no new UI.
+
+## 4.4 Upload (BullMQ `upload` job — on Stop)
+
+```text
+Stop: container.stop → revoke SSH keys → status STOPPED → enqueue upload
+Upload: tar -czf <dir> → PutObject (overwrites the previous snapshot)
+```
+
+The workspace is already STOPPED when the upload runs, so no new status
+value is needed for the MVP; the job is observable in BullMQ. A future
+`SNAPSHOTTING` state can surface progress in the dashboard.
+
+## 4.5 Components to build
+
+| Piece | Detail |
+| --- | --- |
+| MinIO service | `docker-compose.yml`: loopback `:9000`, console `:9001`, named volume, bucket auto-bootstrap |
+| Env | `S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` — added to the zod schema in `lib/env.ts` and `.env.example` |
+| `lib/storage.ts` | `snapshotExists()`, `loadSnapshot()`, `saveSnapshot()`, `deleteSnapshots()` via `@aws-sdk/client-s3` (`forcePathStyle: true` for MinIO) |
+| Wire-in | `lib/provision.ts` → restore step before clone; `index.ts` → replace the three `TODO` handlers |
+
+## 4.6 Failure modes and MVP limits
+
+- **Crash between Stop and upload** → previous snapshot stays; BullMQ's 3×
+  retry covers transient MinIO/network failures. A hard crash inside the
+  window loses only that session's last edits (periodic sync is the later fix).
+- **Start while an upload is still running** → local cache hit wins; the
+  in-flight tar may include the fresh writes — harmless, next Stop overwrites.
+- **Full overwrite, no versioning or dedup** → simple and predictable;
+  incremental sync (rsync-style or git bundles) comes after.
+- **Snapshots include `node_modules`** → correctness first; optional excludes
+  are a later tuning knob.
+- **Single-host assumption** → while a workspace is RUNNING, local is
+  newest. Multi-host compute (Type 4) is unaffected: restore-before-mount
+  is already the rule.
+
+## 4.7 Test plan (definition of done)
+
+```text
+1. docker compose up → MinIO healthy, bucket exists
+2. Start workspace → RUNNING (clone path unchanged)
+3. Create a marker file in the workspace → Stop
+   → object appears in the bucket (marker inside the tar)
+4. Delete the local .workspaces/projects/<id> directory → Start
+   → files return from the bucket, marker present, no re-clone needed
+5. Delete the workspace → bucket objects for that workspaceId are gone
+6. Stop MinIO → Stop workspace → upload job fails + retries,
+   workspace row unaffected (still STOPPED)
+```
+
+## 4.8 Build order for step 12
+
+```text
+1. MinIO compose service + env schema + bucket bootstrap
+2. lib/storage.ts (+ a small script test against MinIO)
+3. restore hook in provision.ts
+4. upload + delete handlers in index.ts
+5. E2E: 4.7 checklist, then PR
+```
 
 ---
 
@@ -1056,7 +1139,7 @@ Do not build everything simultaneously.
         ↓
 11. Redis + BullMQ
         ↓
-12. Object storage
+12. Object storage (design: section 4)
         ↓
 13. Preview URLs
         ↓
