@@ -7,6 +7,7 @@ const schema = z.object({
   GITHUB_CLIENT_SECRET: z.string().min(1),
   GITHUB_REDIRECT_URI: z.url(),
   CRYPTO_KEY: z.string().min(1),
+  REDIS_URL: z.url(),
 
   DOCKER_SOCKET: z.string().min(1).default("/var/run/docker.sock"),
   WORKSPACE_IMAGE: z.string().min(1).default("cloudide-workspace:latest"),
