@@ -101,7 +101,6 @@ Responsible for:
 - Monaco editor
 - Terminal UI
 - Preview
-- AI assistant
 
 ---
 
@@ -117,7 +116,6 @@ Responsible for:
 - File operations
 - Terminal sessions
 - Git operations
-- AI requests
 
 ---
 
@@ -465,7 +463,7 @@ Main UI:
 
 ```text
 ┌─────────────────────────────────────────────┐
-│ Project        Terminal        Run    AI     │
+│ Project        Terminal        Run           │
 ├───────────────┬─────────────────────────────┤
 │               │                             │
 │ src/          │      Monaco Editor          │
@@ -801,72 +799,53 @@ GitHub
 
 ---
 
-# 18. LLM Architecture
+# 18. LLM Architecture — CUT (delegated to your editor)
 
-The LLM should be an independent service.
+> **Decision: removed from scope.** The platform runs no LLM. Every
+> supported editor already ships one — Cursor, Antigravity and JetBrains AI
+> all reach the workspace over Remote-SSH (section 13.2), so users bring
+> their own AI and their own subscription. The platform pays zero token
+> costs, and building a chat assistant here would mean competing with the
+> tools this platform integrates with, not with the editor market.
+
+What replaces it:
 
 ```text
-                    ┌───────────────┐
-                    │   Browser     │
-                    └───────┬───────┘
-                            ↓
-                     AI Assistant API
-                            ↓
-              ┌─────────────┼─────────────┐
-              ↓             ↓             ↓
-         Selected Code   Repo Search   Terminal Error
-              │             │             │
-              └─────────────┼─────────────┘
-                            ↓
-                           LLM
-                            ↓
-                     Response / Patch
+User's editor (Cursor / Antigravity / VS Code + Copilot)
+        │
+        ↓  Remote-SSH (section 13.2)
+Workspace container at /workspace
+        │
+        ↓
+Full codebase context + terminal + git — AI included
 ```
 
-Possible LLM capabilities:
+Consequences of this decision:
 
-- Explain code
-- Generate code
-- Fix errors
-- Generate tests
-- Refactor
-- Explain terminal errors
-- Search project context
-- Suggest commands
-
-For repository-wide context, use embeddings/vector search later rather than sending the entire repository to the model.
+- Section 19 (AI command safety) is also cut — it only ever guarded an LLM.
+- The `ai_conversations`, `ai_messages` and `ai_command_proposals` tables
+  in `packages/db` are unused; drop them in a later migration.
+- The browser IDE (code-server) intentionally has no assistant. The browser
+  path is for zero-install users; anyone who wants AI opens their editor.
+  If that ever changes, do NOT build a chat product — wire a single
+  "send selection to my own API key" call instead.
 
 ---
 
-# 19. AI Command Safety
+# 19. AI Command Safety — CUT (see section 18)
 
-Never allow the LLM to execute arbitrary commands automatically.
+This section existed only to stop an LLM from executing shell commands on
+the platform without approval. There is no platform LLM, so there is no
+proposal channel to secure: a human types every command into the terminal,
+and the editor runs inside the container under the normal resource limits.
 
-Use:
+Removed expectations:
 
-```text
-LLM
- ↓
-Command proposal
- ↓
-User approval
- ↓
-Policy validation
- ↓
-Container
-```
+- `ai_command_proposals` approval flow
+- LLM policy validation before exec
 
-Example:
-
-```text
-AI: I want to run:
-
-npm install
-
-[Allow] [Reject]
-```
-
-This is especially important because the platform executes code.
+Section 20 (Security Architecture) is unchanged and still fully required —
+it covers the platform itself, not the AI that no longer exists.
 
 ---
 
@@ -994,15 +973,8 @@ Nginx / Caddy
 
 ## AI
 
-```text
-LLM API
-```
-
-Optional later:
-
-```text
-Vector database / pgvector
-```
+None — cut (section 18). AI comes from the user's editor over Remote-SSH;
+the platform runs no model and stores no API keys.
 
 ## Observability
 
@@ -1042,11 +1014,8 @@ cloud-dev-platform/
 │   ├── workspace/
 │   │   └── Docker management
 │   │
-│   ├── terminal/
-│   │   └── WebSocket terminal
-│   │
-│   └── ai/
-│       └── LLM integration
+│   └── terminal/
+│       └── WebSocket terminal
 │
 ├── infra/
 │   ├── docker/
@@ -1091,7 +1060,7 @@ Do not build everything simultaneously.
         ↓
 13. Preview URLs
         ↓
-14. LLM assistant
+14. LLM assistant — CUT: editors bring their own AI (section 18)
         ↓
 15. Security hardening
         ↓
@@ -1147,11 +1116,11 @@ The long-term system should look like:
 └──────────────────────────────────────────────────────────┘
 
                          +
-                    LLM Assistant
+               Cursor / Antigravity / VS Code
                          │
                          ↓
-               Code / Repo / Errors
+                 Remote-SSH (section 13.2)
                          │
                          ↓
-                  Suggestions / Patches
+              Bring-your-own AI, your own keys
 ```
