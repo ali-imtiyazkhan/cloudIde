@@ -1,0 +1,26 @@
+.panel {
+  position: relative;
+  width: 100%;
+  background: #03060c;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.host {
+  height: 420px;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px;
+  background: rgba(3, 6, 12, 0.9);
+  color: #9aa4b2;
+  font-size: 14px;
+  line-height: 1.5;
+}

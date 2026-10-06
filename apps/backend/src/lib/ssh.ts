@@ -26,11 +26,15 @@ export async function generateSshKeyPair(comment: string): Promise<SshKeyPair> {
 
   try {
     await execFileAsync("ssh-keygen", [
-      "-t", "ed25519",
+      "-t",
+      "ed25519",
       "-q",
-      "-N", "",
-      "-C", comment,
-      "-f", keyPath,
+      "-N",
+      "",
+      "-C",
+      comment,
+      "-f",
+      keyPath,
     ]);
 
     const [privateKey, publicKey] = await Promise.all([

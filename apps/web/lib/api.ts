@@ -20,7 +20,10 @@ type ApiOptions = Omit<RequestInit, "credentials" | "headers"> & {
  * included. The API sets cookies for `localhost`, and cookies ignore
  * ports, so the session travels between :3000 and :4000 in dev.
  */
-export async function api<T>(path: string, options: ApiOptions = {}): Promise<T> {
+export async function api<T>(
+  path: string,
+  options: ApiOptions = {},
+): Promise<T> {
   const { headers, ...init } = options;
 
   const res = await fetch(`${API_URL}${path}`, {

@@ -58,7 +58,12 @@ reposRouter.get("/", async (req, res) => {
 
   const query = listReposQuerySchema.safeParse(req.query);
   if (!query.success) {
-    return fail(res, 400, "invalid_query", "Unsupported pagination or sort options.");
+    return fail(
+      res,
+      400,
+      "invalid_query",
+      "Unsupported pagination or sort options.",
+    );
   }
 
   const { type, sort, direction, page, per_page } = query.data;
@@ -143,7 +148,12 @@ reposRouter.post("/repo", async (req, res) => {
   });
 
   if (existing) {
-    return fail(res, 409, "repo_already_imported", "Repository already exists.");
+    return fail(
+      res,
+      409,
+      "repo_already_imported",
+      "Repository already exists.",
+    );
   }
 
   const projectId = randomUUID();

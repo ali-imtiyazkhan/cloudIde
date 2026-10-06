@@ -18,7 +18,12 @@ import {
 
 export const workspacesRouter = Router();
 
-const ACTIVE: WorkspaceStatus[] = ["PENDING", "PROVISIONING", "STARTING", "RUNNING"];
+const ACTIVE: WorkspaceStatus[] = [
+  "PENDING",
+  "PROVISIONING",
+  "STARTING",
+  "RUNNING",
+];
 
 const AUTH_KEYS_PATH = "/home/coder/.ssh/authorized_keys";
 
@@ -30,7 +35,10 @@ const OPENSSH_PUBLIC_KEY = /^ssh-ed25519 [A-Za-z0-9+/=]+ [A-Za-z0-9@._-]+$/;
  * active IDE-connection key per workspace: each "Connect" replaces the
  * previous key, and Stop wipes the file entirely.
  */
-async function setAuthorizedKeys(container: Docker.Container, publicKey: string) {
+async function setAuthorizedKeys(
+  container: Docker.Container,
+  publicKey: string,
+) {
   const execObj = await container.exec({
     Cmd: ["/bin/sh", "-c", `printf '%s\\n' '${publicKey}' > ${AUTH_KEYS_PATH}`],
     User: "coder",
@@ -70,11 +78,17 @@ workspacesRouter.post("/", async (req, res) => {
   if (!session) return fail(res, 401, "unauthorized", "Sign in to continue.");
 
   const githubAccount = session.user.githubAccounts[0];
-  if (!githubAccount) return fail(res, 403, "no_github_account", "No GitHub account is linked.");
+  if (!githubAccount)
+    return fail(res, 403, "no_github_account", "No GitHub account is linked.");
 
   const parsed = createWorkspaceSchema.safeParse(req.body);
   if (!parsed.success) {
-    return fail(res, 400, "invalid_body", parsed.error.issues[0]?.message ?? "Invalid request body.");
+    return fail(
+      res,
+      400,
+      "invalid_body",
+      parsed.error.issues[0]?.message ?? "Invalid request body.",
+    );
   }
 
   const env = getEnv();
@@ -88,21 +102,35 @@ workspacesRouter.post("/", async (req, res) => {
       repository: { select: { cloneUrl: true, fullName: true } },
     },
   });
-  if (!project) return fail(res, 404, "project_not_found", "Project not found.");
+  if (!project)
+    return fail(res, 404, "project_not_found", "Project not found.");
 
   const running = await prisma.workspace.count({
     where: { userId: session.user.id, status: { in: ACTIVE } },
   });
   if (running >= env.MAX_ACTIVE_WORKSPACES) {
-    return fail(res, 429, "quota_exceeded", `Limit of ${env.MAX_ACTIVE_WORKSPACES} active workspaces reached.`);
+    return fail(
+      res,
+      429,
+      "quota_exceeded",
+      `Limit of ${env.MAX_ACTIVE_WORKSPACES} active workspaces reached.`,
+    );
   }
 
   const cpuLimit = parsed.data.cpuLimit ?? env.WORKSPACE_CPU_LIMIT;
-  const memoryLimitMb = parsed.data.memoryLimitMb ?? env.WORKSPACE_MEMORY_LIMIT_MB;
+  const memoryLimitMb =
+    parsed.data.memoryLimitMb ?? env.WORKSPACE_MEMORY_LIMIT_MB;
   const diskLimitMb = parsed.data.diskLimitMb ?? env.WORKSPACE_DISK_LIMIT_MB;
 
   const workspace = await prisma.workspace.create({
-    data: { userId: session.user.id, projectId: project.id, status: "PROVISIONING", cpuLimit, memoryLimitMb, diskLimitMb },
+    data: {
+      userId: session.user.id,
+      projectId: project.id,
+      status: "PROVISIONING",
+      cpuLimit,
+      memoryLimitMb,
+      diskLimitMb,
+    },
   });
 
   try {
@@ -122,7 +150,12 @@ workspacesRouter.post("/", async (req, res) => {
         where: { id: workspace.id },
         data: { status: "FAILED" },
       });
-      return fail(res, 502, "clone_failed", "Could not clone the repository into the workspace.");
+      return fail(
+        res,
+        502,
+        "clone_failed",
+        "Could not clone the repository into the workspace.",
+      );
     }
 
     const portKey = `${env.WORKSPACE_INTERNAL_PORT}/tcp`;
@@ -199,8 +232,16 @@ workspacesRouter.post("/", async (req, res) => {
     return res.status(201).json({ workspace: updated });
   } catch (error) {
     console.error("workspace provisioning failed:", error);
-    await prisma.workspace.update({ where: { id: workspace.id }, data: { status: "FAILED" } });
-    return fail(res, 502, "provision_failed", "Could not start the workspace container.");
+    await prisma.workspace.update({
+      where: { id: workspace.id },
+      data: { status: "FAILED" },
+    });
+    return fail(
+      res,
+      502,
+      "provision_failed",
+      "Could not start the workspace container.",
+    );
   }
 });
 
@@ -231,14 +272,17 @@ workspacesRouter.get("/:id/status", async (req, res) => {
     where: { id: id.data, userId: session.user.id },
     include: { container: true },
   });
-  if (!workspace) return fail(res, 404, "workspace_not_found", "Workspace not found.");
+  if (!workspace)
+    return fail(res, 404, "workspace_not_found", "Workspace not found.");
 
   if (!workspace.container) {
     return res.json({ status: workspace.status, docker: null });
   }
 
   try {
-    const info = await getDocker().getContainer(workspace.container.dockerId).inspect();
+    const info = await getDocker()
+      .getContainer(workspace.container.dockerId)
+      .inspect();
     const running = info.State.Running;
 
     if (!running && workspace.status === "RUNNING") {
@@ -249,7 +293,11 @@ workspacesRouter.get("/:id/status", async (req, res) => {
         }),
         prisma.container.update({
           where: { id: workspace.container.id },
-          data: { status: "EXITED", exitCode: info.State.ExitCode, stoppedAt: new Date() },
+          data: {
+            status: "EXITED",
+            exitCode: info.State.ExitCode,
+            stoppedAt: new Date(),
+          },
         }),
       ]);
     }
@@ -265,8 +313,16 @@ workspacesRouter.get("/:id/status", async (req, res) => {
   } catch (error) {
     // Docker knows nothing about it, so the row is stale.
     console.error("container inspect failed:", error);
-    await prisma.workspace.update({ where: { id: workspace.id }, data: { status: "FAILED" } });
-    return fail(res, 502, "docker_unreachable", "Could not reach the Docker daemon.");
+    await prisma.workspace.update({
+      where: { id: workspace.id },
+      data: { status: "FAILED" },
+    });
+    return fail(
+      res,
+      502,
+      "docker_unreachable",
+      "Could not reach the Docker daemon.",
+    );
   }
 });
 
@@ -281,8 +337,10 @@ workspacesRouter.post("/:id/connect", async (req, res) => {
     where: { id: id.data, userId: session.user.id },
     include: { container: true },
   });
-  if (!workspace) return fail(res, 404, "workspace_not_found", "Workspace not found.");
-  if (!workspace.container) return fail(res, 409, "no_container", "Workspace has no container.");
+  if (!workspace)
+    return fail(res, 404, "workspace_not_found", "Workspace not found.");
+  if (!workspace.container)
+    return fail(res, 409, "no_container", "Workspace has no container.");
 
   const env = getEnv();
   const container = getDocker().getContainer(workspace.container.dockerId);
@@ -292,13 +350,22 @@ workspacesRouter.post("/:id/connect", async (req, res) => {
   try {
     const info = await container.inspect();
     running = info.State.Running;
-    sshHostPort = info.NetworkSettings.Ports?.[`${env.WORKSPACE_SSH_INTERNAL_PORT}/tcp`]?.[0]?.HostPort;
+    sshHostPort =
+      info.NetworkSettings.Ports?.[
+        `${env.WORKSPACE_SSH_INTERNAL_PORT}/tcp`
+      ]?.[0]?.HostPort;
   } catch (error) {
     console.error("connect: container inspect failed:", error);
-    return fail(res, 502, "docker_unreachable", "Could not reach the Docker daemon.");
+    return fail(
+      res,
+      502,
+      "docker_unreachable",
+      "Could not reach the Docker daemon.",
+    );
   }
 
-  if (!running) return fail(res, 409, "not_running", "Start the workspace first.");
+  if (!running)
+    return fail(res, 409, "not_running", "Start the workspace first.");
   if (!sshHostPort) {
     return fail(
       res,
@@ -309,7 +376,9 @@ workspacesRouter.post("/:id/connect", async (req, res) => {
   }
 
   const alias = `cloudide-${workspace.id.slice(0, 8)}`;
-  const { privateKey, publicKey } = await generateSshKeyPair(`cloudide-${workspace.id}`);
+  const { privateKey, publicKey } = await generateSshKeyPair(
+    `cloudide-${workspace.id}`,
+  );
 
   if (!OPENSSH_PUBLIC_KEY.test(publicKey)) {
     console.error("connect: unexpected public key format");
@@ -321,7 +390,12 @@ workspacesRouter.post("/:id/connect", async (req, res) => {
     await setAuthorizedKeys(container, publicKey);
   } catch (error) {
     console.error("connect: injecting authorized_keys failed:", error);
-    return fail(res, 502, "ssh_setup_failed", "Could not configure SSH access to the workspace.");
+    return fail(
+      res,
+      502,
+      "ssh_setup_failed",
+      "Could not configure SSH access to the workspace.",
+    );
   }
 
   return res.json({
@@ -355,8 +429,10 @@ workspacesRouter.post("/:id/stop", async (req, res) => {
     where: { id: id.data, userId: session.user.id },
     include: { container: true },
   });
-  if (!workspace) return fail(res, 404, "workspace_not_found", "Workspace not found.");
-  if (!workspace.container) return fail(res, 409, "no_container", "Workspace has no container.");
+  if (!workspace)
+    return fail(res, 404, "workspace_not_found", "Workspace not found.");
+  if (!workspace.container)
+    return fail(res, 409, "no_container", "Workspace has no container.");
 
   try {
     const container = getDocker().getContainer(workspace.container.dockerId);
@@ -375,7 +451,11 @@ workspacesRouter.post("/:id/stop", async (req, res) => {
       }),
       prisma.container.update({
         where: { id: workspace.container.id },
-        data: { status: "EXITED", exitCode: info.State.ExitCode, stoppedAt: new Date() },
+        data: {
+          status: "EXITED",
+          exitCode: info.State.ExitCode,
+          stoppedAt: new Date(),
+        },
       }),
       prisma.containerHistory.create({
         data: {
@@ -392,7 +472,12 @@ workspacesRouter.post("/:id/stop", async (req, res) => {
     return res.json({ workspace: updated });
   } catch (error) {
     console.error("workspace stop failed:", error);
-    return fail(res, 502, "docker_error", "Could not stop the workspace container.");
+    return fail(
+      res,
+      502,
+      "docker_error",
+      "Could not stop the workspace container.",
+    );
   }
 });
 
@@ -407,7 +492,8 @@ workspacesRouter.delete("/:id", async (req, res) => {
     where: { id: id.data, userId: session.user.id },
     include: { container: true },
   });
-  if (!workspace) return fail(res, 404, "workspace_not_found", "Workspace not found.");
+  if (!workspace)
+    return fail(res, 404, "workspace_not_found", "Workspace not found.");
 
   if (workspace.container) {
     try {
@@ -419,7 +505,10 @@ workspacesRouter.delete("/:id", async (req, res) => {
     }
   }
 
-  await prisma.workspace.update({ where: { id: workspace.id }, data: { status: "DELETED" } });
+  await prisma.workspace.update({
+    where: { id: workspace.id },
+    data: { status: "DELETED" },
+  });
 
   return res.json({ ok: true });
 });
