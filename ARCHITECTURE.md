@@ -367,7 +367,8 @@ Move the backend and Docker host to a cloud VM.
                            Workspace A     Workspace B
 ```
 
-This is a good first production-like version.
+This is a good first production-like version. A runnable deployment
+checklist for it lives in section 25.
 
 ---
 
@@ -1207,3 +1208,105 @@ The long-term system should look like:
                          ↓
               Bring-your-own AI, your own keys
 ```
+
+---
+
+# 25. Deploy — Type 2 (Single Cloud Server)
+
+The runnable checklist for section 7: one Docker-capable VPS runs the whole
+stack, so the developer's PC stops paying CPU, RAM and disk — it only runs
+a browser and an editor. **No code changes are required**: `STORAGE_ROOT`,
+the Docker socket, Redis and Postgres all simply resolve on the server.
+
+## 25.1 Server requirements
+
+- 2 vCPU / 4 GB RAM minimum. A workspace defaults to 2 CPU + 4096 MB, so
+  budget `(MAX_ACTIVE_WORKSPACES × WORKSPACE_MEMORY_LIMIT_MB) + 1 GB` for
+  Postgres/Redis/backend — or lower the workspace limits on a small box.
+- Docker Engine + compose plugin, bun ≥ 1.4, Ubuntu 24.04 LTS assumed.
+- A domain for HTTPS (an IP works for a first trial).
+
+## 25.2 Environment
+
+```text
+# apps/backend/.env
+DATABASE_URL=postgresql://…                       # compose Postgres or Neon
+REDIS_URL=redis://localhost:6379
+GITHUB_CLIENT_ID=…      GITHUB_CLIENT_SECRET=…
+GITHUB_REDIRECT_URI=https://api.<domain>/auth/github/callback
+CRYPTO_KEY=…                                       # see .env.example
+WEB_URL=https://app.<domain>                       # CORS origin must match
+STORAGE_ROOT=/var/lib/cloudide/workspaces
+
+# apps/web — NEXT_PUBLIC_* is inlined at BUILD time, not runtime
+NEXT_PUBLIC_API_URL=https://api.<domain>
+NEXT_PUBLIC_WSS_URL=wss://ws.<domain>
+```
+
+## 25.3 Checklist
+
+```text
+1.  Provision VPS; non-root user; firewall allows only 22/80/443
+2.  Install Docker Engine + bun
+3.  Clone the repo, fill both .env files (section 25.2)
+4.  docker compose up -d            # postgres (+ redis, + minio after step 12)
+5.  Start the three apps (section 25.5)
+6.  GitHub OAuth app: callback = GITHUB_REDIRECT_URI, homepage = WEB_URL
+7.  Caddy reverse proxy (section 25.4) → https
+8.  Sign in → import a repo → Start → Terminal → Connect (Cursor, 25.6)
+```
+
+## 25.4 Reverse proxy (three origins, one cert)
+
+Separate origins keep routing trivial — the API and the WebSocket terminal
+both answer on `/workspaces/*`, so do not share a hostname with the web app.
+
+```text
+app.<domain>  → localhost:3000   # Next.js
+api.<domain>  → localhost:4000   # Express (CORS already allows WEB_URL)
+ws.<domain>   → localhost:4001   # wss — Caddy handles the Upgrade header
+```
+
+Only 22/80/443 face the internet; 3000/4000/4001/5431/6379 stay bound to
+localhost. WebSocket subprotocols pass through Caddy without extra config.
+
+## 25.5 Process supervision
+
+MVP: three systemd units (`bun run dev` equivalents with `Restart=always`).
+Cleaner later: add web/backend/wss as compose services so `docker compose
+up -d` runs everything — the workspace containers themselves are already
+created by Docker either way.
+
+## 25.6 Cursor / VS Code from your machine
+
+Generated SSH config stays loopback-bound by design (section 13.2) — one
+line routes it through the server instead of exposing ports:
+
+```text
+Host cloudide-…
+  …generated block…
+  ProxyJump user@vps
+```
+
+The ephemeral key issued by Connect authenticates both the jump and the
+workspace. Do not publish workspace ports to the internet.
+
+## 25.7 PaaS reality check (Render, Railway, …)
+
+| Requirement | Managed PaaS | VPS |
+| --- | --- | --- |
+| Docker daemon (create workspace containers) | ❌ no privileged / no Docker-in-Docker | ✅ |
+| Raw TCP ingress for workspace SSH | ❌ HTTP(S) only | ✅ |
+| WebSockets, managed Postgres/Redis | ✅ | ✅ (self-hosted via compose) |
+
+Until this project moves to a scheduler it can share (Type 4/Kubernetes),
+a VPS — or Fly.io, whose machines are real micro-VMs — is the deployment
+target. A PaaS can host the dashboard, but Start would fail: there is no
+Docker for it to talk to.
+
+## 25.8 Why object storage becomes mandatory here
+
+On a laptop, losing `.workspaces` is an inconvenience. On a server it is
+routine: root filesystems are rebuilt, VMs are replaced, disks fail. Once
+deployed, section 4's snapshot flow stops being a nice-to-have — it is the
+thing that lets this box be disposable.
