@@ -1,3 +1,39 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Design tokens → Tailwind utilities.
+
+   Declared `inline` because every value references a :root variable that the
+   pre-existing CSS modules already consume. Inlining substitutes `var(--x)`
+   straight into the utility, so both worlds read from one source of truth:
+
+     --color-background  →  bg-background      --color-line  →  border-line
+     --color-accent      →  text-accent        --font-mono   →  font-mono
+--------------------------------------------------------------------------- */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-surface: var(--surface);
+  --color-surface-strong: var(--surface-strong);
+  --color-line: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-success: var(--success);
+  --color-danger: var(--danger);
+  --color-glow: var(--glow);
+
+  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+}
+
+@theme {
+  --animate-rise: rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-aurora: aurora 18s ease-in-out infinite;
+  --animate-float: float 9s ease-in-out infinite;
+  --animate-blip: blip 2.4s ease-in-out infinite;
+}
+
 :root {
   --background: #03060c;
   --foreground: #f3f6fb;
@@ -13,39 +49,105 @@
   color-scheme: dark;
 }
 
-html,
-body {
-  max-width: 100vw;
-  overflow-x: hidden;
+/* Base styles live in @layer base on purpose: unlayered rules would outrank
+   every Tailwind utility in the cascade, which would silently break padding,
+   margin and color utilities app-wide. */
+@layer base {
+  html,
+  body {
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+
+  html {
+    background: var(--background);
+  }
+
+  body {
+    color: var(--foreground);
+    background: var(--background);
+    font-family: var(--font-geist-sans), system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100svh;
+  }
+
+  * {
+    box-sizing: border-box;
+    padding: 0;
+    margin: 0;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  button {
+    font-family: inherit;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
 }
 
-html {
-  background: var(--background);
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(22px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: var(--font-geist-sans), system-ui, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  min-height: 100svh;
+@keyframes aurora {
+  0%,
+  100% {
+    transform: translate3d(-6%, -4%, 0) scale(1);
+    opacity: 0.55;
+  }
+  50% {
+    transform: translate3d(8%, 6%, 0) scale(1.18);
+    opacity: 0.85;
+  }
 }
 
-* {
-  box-sizing: border-box;
-  padding: 0;
-  margin: 0;
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-14px);
+  }
 }
 
-a {
-  color: inherit;
-  text-decoration: none;
+@keyframes blip {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 55%, transparent);
+  }
+  50% {
+    opacity: 0.75;
+    box-shadow: 0 0 0 6px transparent;
+  }
 }
 
-button {
-  font-family: inherit;
-}
-
-::selection {
-  background: color-mix(in srgb, var(--accent) 35%, transparent);
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
