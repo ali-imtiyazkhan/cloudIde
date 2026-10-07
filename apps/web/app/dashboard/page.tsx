@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { api, ApiError } from "../../lib/api";
@@ -17,6 +16,8 @@ import type {
   WorkspaceStatus,
   WorkspaceStatusResponse,
 } from "../../lib/types";
+import { SiteHeader } from "../../components/site-header";
+import { SiteFooter } from "../../components/site-footer";
 import styles from "./page.module.css";
 
 const TerminalPanel = dynamic(() => import("../../components/terminal-panel"), {
@@ -427,25 +428,29 @@ export default function DashboardPage() {
 
   return (
     <div className={styles.page}>
-      <header className={styles.header}>
-        <Link href="/" className={styles.logo}>
-          <span className={styles.logoMark} />
-          CloudIDE
-        </Link>
-
-        <div className={styles.user}>
-          {user?.image && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={user.image} alt="" className={styles.avatar} />
-          )}
-          <span className={styles.userName}>
-            {user?.githubLogin ?? user?.name ?? "Account"}
-          </span>
-          <button className={styles.logout} onClick={logout}>
-            Sign out
-          </button>
-        </div>
-      </header>
+      <SiteHeader
+        actions={
+          <div className="flex items-center gap-3">
+            {user?.image && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={user.image}
+                alt=""
+                className="h-8 w-8 rounded-full border border-line object-cover"
+              />
+            )}
+            <span className="hidden text-sm text-muted sm:inline">
+              {user?.githubLogin ?? user?.name ?? "Account"}
+            </span>
+            <button
+              className="rounded-lg border border-line bg-surface px-3.5 py-2 text-sm text-foreground transition-colors duration-200 hover:border-danger/55 hover:bg-danger/10 hover:text-danger"
+              onClick={logout}
+            >
+              Sign out
+            </button>
+          </div>
+        }
+      />
 
       <main className={styles.main}>
         {notice && <div className={styles.notice}>{notice}</div>}
@@ -570,6 +575,8 @@ export default function DashboardPage() {
           )}
         </section>
       </main>
+
+      <SiteFooter />
 
       {terminalFor && (
         <div
