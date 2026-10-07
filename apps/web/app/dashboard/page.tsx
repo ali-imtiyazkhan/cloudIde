@@ -363,6 +363,16 @@ export default function DashboardPage() {
     if (ws?.status === "RUNNING") {
       return (
         <span className={styles.wsControls}>
+          {ws.previewUrl && (
+            <a
+              className={styles.connectBtn}
+              href={ws.previewUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Open IDE
+            </a>
+          )}
           <button
             className={styles.connectBtn}
             onClick={() => setTerminalFor(ws.id)}

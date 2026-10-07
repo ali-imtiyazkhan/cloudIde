@@ -238,6 +238,8 @@
   display: inline-flex;
   align-items: center;
   white-space: nowrap;
+  /* .connectBtn is also used on <a> (Open IDE) — kill the default underline. */
+  text-decoration: none;
 }
 
 .startBtn {
