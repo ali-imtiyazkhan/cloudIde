@@ -1,18 +1,14 @@
-import { mkdir } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
 import { Router } from "express";
 import { prisma, type WorkspaceStatus } from "@repo/db";
 import type Docker from "dockerode";
-import { decrypt } from "../crypto";
 import { fail } from "../lib/http";
 import { getDocker } from "../lib/docker";
-import { cloneRepository } from "../lib/git";
 import { generateSshKeyPair } from "../lib/ssh";
 import { getEnv } from "../lib/env";
+import { enqueueSnapJob } from "../lib/queue";
 import { getSession } from "../session";
 import {
   createWorkspaceSchema,
-  storagePrefixSchema,
   workspaceIdSchema,
 } from "../validations";
 
@@ -57,20 +53,6 @@ async function setAuthorizedKeys(
   if (info.ExitCode !== 0) {
     throw new Error(`authorized_keys update exited with ${info.ExitCode}`);
   }
-}
-
-/** Resolves the workspace mount and refuses anything outside STORAGE_ROOT. */
-async function resolveMount(storagePrefix: string) {
-  const prefix = storagePrefixSchema.parse(storagePrefix);
-  const root = resolve(getEnv().STORAGE_ROOT);
-  const hostPath = resolve(join(root, prefix));
-
-  if (hostPath !== root && !hostPath.startsWith(root + sep)) {
-    throw new Error("storage path escapes STORAGE_ROOT");
-  }
-
-  await mkdir(hostPath, { recursive: true });
-  return hostPath;
 }
 
 workspacesRouter.post("/", async (req, res) => {
@@ -133,105 +115,17 @@ workspacesRouter.post("/", async (req, res) => {
     },
   });
 
+  // Provisioning runs in the BullMQ worker (`restore` job → provisionWorkspace):
+  // the snapshot/restore half must land on disk before any container can
+  // bind-mount /workspace, so it cannot happen inside this request.
   try {
-    const hostPath = await resolveMount(project.storagePrefix);
-
-    // The storage directory starts empty — put the repository in it before
-    // the container mounts it, so /workspace opens with the project's code.
-    try {
-      await cloneRepository({
-        cloneUrl: project.repository.cloneUrl,
-        token: decrypt(githubAccount.accessTokenEnc),
-        destDir: hostPath,
-      });
-    } catch (error) {
-      console.error(`clone of ${project.repository.fullName} failed:`, error);
-      await prisma.workspace.update({
-        where: { id: workspace.id },
-        data: { status: "FAILED" },
-      });
-      return fail(
-        res,
-        502,
-        "clone_failed",
-        "Could not clone the repository into the workspace.",
-      );
-    }
-
-    const portKey = `${env.WORKSPACE_INTERNAL_PORT}/tcp`;
-    const sshKey = `${env.WORKSPACE_SSH_INTERNAL_PORT}/tcp`;
-
-    const container = await getDocker().createContainer({
-      Image: env.WORKSPACE_IMAGE,
-      // workspace.id is a UUID, so this can never collide or inject.
-      name: `cloudide-ws-${workspace.id}`,
-      User: "coder",
-      ExposedPorts: { [portKey]: {}, [sshKey]: {} },
-      Env: [
-        "PASSWORD=coder",
-        "AUTH=none",
-        `CLOUDIDE_WORKSPACE_ID=${workspace.id}`,
-        `GIT_TERMINAL_PROMPT=0`,
-      ],
-      Labels: {
-        "cloudide.managed": "true",
-        "cloudide.workspaceId": workspace.id,
-        "cloudide.userId": session.user.id,
-      },
-      HostConfig: {
-        // Loopback only. Publishing 0.0.0.0 hands an unauthenticated
-        // code-server shell to anyone who can reach the port.
-        PortBindings: {
-          [portKey]: [{ HostIp: env.WORKSPACE_BIND_IP, HostPort: "" }],
-          // SSH for "Connect to VS Code / Cursor / Antigravity" — also
-          // loopback-only; auth is the ephemeral key issued by the API.
-          [sshKey]: [{ HostIp: env.WORKSPACE_BIND_IP, HostPort: "" }],
-        },
-        Binds: [`${hostPath}:/workspace`],
-        NanoCpus: cpuLimit * 1_000_000_000,
-        Memory: memoryLimitMb * 1024 * 1024,
-        // Only honoured on overlay2/xfs; harmless elsewhere.
-        StorageOpt: { size: `${diskLimitMb}m` },
-        AutoRemove: false,
-        RestartPolicy: { Name: "no" },
-      },
+    await enqueueSnapJob({
+      type: "restore",
+      workspaceId: workspace.id,
+      storagePrefix: project.storagePrefix,
     });
-
-    await container.start();
-
-    const info = await container.inspect();
-    const hostPort = info.NetworkSettings.Ports?.[portKey]?.[0]?.HostPort;
-    if (!hostPort) throw new Error("docker did not publish a host port");
-
-    const previewUrl = `http://${env.WORKSPACE_BIND_IP}:${hostPort}`;
-
-    const [updated] = await prisma.$transaction([
-      prisma.workspace.update({
-        where: { id: workspace.id },
-        data: {
-          containerId: container.id,
-          status: "RUNNING",
-          previewUrl,
-          startedAt: new Date(),
-          lastActiveAt: new Date(),
-        },
-      }),
-      prisma.container.create({
-        data: {
-          dockerId: container.id,
-          image: env.WORKSPACE_IMAGE,
-          status: "RUNNING",
-          hostPath,
-          internalPath: "/workspace",
-          startedAt: new Date(),
-          workspaceId: workspace.id,
-        },
-      }),
-    ]);
-
-    return res.status(201).json({ workspace: updated });
   } catch (error) {
-    console.error("workspace provisioning failed:", error);
+    console.error("enqueue of restore job failed:", error);
     await prisma.workspace.update({
       where: { id: workspace.id },
       data: { status: "FAILED" },
@@ -239,10 +133,12 @@ workspacesRouter.post("/", async (req, res) => {
     return fail(
       res,
       502,
-      "provision_failed",
-      "Could not start the workspace container.",
+      "queue_unavailable",
+      "Could not schedule workspace provisioning.",
     );
   }
+
+  return res.status(201).json({ workspace });
 });
 
 workspacesRouter.get("/", async (req, res) => {
@@ -427,7 +323,10 @@ workspacesRouter.post("/:id/stop", async (req, res) => {
 
   const workspace = await prisma.workspace.findFirst({
     where: { id: id.data, userId: session.user.id },
-    include: { container: true },
+    include: {
+      container: true,
+      project: { select: { storagePrefix: true } },
+    },
   });
   if (!workspace)
     return fail(res, 404, "workspace_not_found", "Workspace not found.");
@@ -469,6 +368,15 @@ workspacesRouter.post("/:id/stop", async (req, res) => {
       }),
     ]);
 
+    // Snapshot the project directory to cloud storage (handler is a no-op
+    // until object storage lands). The stop already succeeded, so a queue
+    // hiccup must not turn it into a failed request.
+    await enqueueSnapJob({
+      type: "upload",
+      workspaceId: workspace.id,
+      storagePrefix: workspace.project.storagePrefix,
+    }).catch((error) => console.error("enqueue of upload job failed:", error));
+
     return res.json({ workspace: updated });
   } catch (error) {
     console.error("workspace stop failed:", error);
@@ -490,7 +398,10 @@ workspacesRouter.delete("/:id", async (req, res) => {
 
   const workspace = await prisma.workspace.findFirst({
     where: { id: id.data, userId: session.user.id },
-    include: { container: true },
+    include: {
+      container: true,
+      project: { select: { storagePrefix: true } },
+    },
   });
   if (!workspace)
     return fail(res, 404, "workspace_not_found", "Workspace not found.");
@@ -509,6 +420,15 @@ workspacesRouter.delete("/:id", async (req, res) => {
     where: { id: workspace.id },
     data: { status: "DELETED" },
   });
+
+  // Cloud cleanup is scoped to THIS workspace's snapshot objects (keyed by
+  // workspaceId) — storagePrefix is the shared project directory and must
+  // survive; it belongs to the project, not to one workspace.
+  await enqueueSnapJob({
+    type: "delete",
+    workspaceId: workspace.id,
+    storagePrefix: workspace.project.storagePrefix,
+  }).catch((error) => console.error("enqueue of delete job failed:", error));
 
   return res.json({ ok: true });
 });

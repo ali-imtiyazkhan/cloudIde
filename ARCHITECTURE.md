@@ -101,7 +101,6 @@ Responsible for:
 - Monaco editor
 - Terminal UI
 - Preview
-- AI assistant
 
 ---
 
@@ -117,7 +116,6 @@ Responsible for:
 - File operations
 - Terminal sessions
 - Git operations
-- AI requests
 
 ---
 
@@ -160,25 +158,108 @@ Development → MinIO
 Production  → Cloudflare R2 / AWS S3
 ```
 
-Possible structure:
+> **Implementation plan for build-order step 12 — designed, not yet built.**
+> Everything below describes the version to implement first; later
+> improvements (incremental sync, versioning) are called out explicitly.
+
+## 4.1 The rule: cloud is truth, disk is cache
 
 ```text
-bucket/
-│
-├── users/
-│   └── user-123/
-│
-├── repositories/
-│   └── repo-456/
-│       ├── snapshots/
-│       └── metadata/
-│
-└── workspaces/
-    └── workspace-789/
-        └── snapshots/
+TODAY   local directory is the only copy      → lose the host, lose the work
+AFTER   object storage is the source of truth → host directory is a cache
 ```
 
-Object storage is persistent.
+A running container must always write to a real local filesystem — that part
+can never be removed. What changes is authority: the local directory may be
+deleted at any time and rebuilt from the bucket.
+
+## 4.2 Object layout
+
+```text
+bucket: cloudide-snapshots
+│
+└── workspaces/
+    └── <workspaceId>/
+        └── snapshot.tar.gz      # full copy of the project directory
+```
+
+- Keyed **per workspace**, not per project: `DELETE /workspaces/:id` removes
+  that workspace's objects, while the local directory
+  (`.workspaces/projects/<storagePrefix>`) is shared by every workspace of
+  the project and must survive.
+- The original `users/` and `repositories/` branches are dropped — user and
+  repository metadata live in PostgreSQL, not in the bucket.
+
+## 4.3 Restore (BullMQ `restore` job — inside provisionWorkspace)
+
+```text
+local dir has .git?      → cache hit, use it, skip download
+else snapshot in bucket? → download + extract into the dir
+else                      → git clone (true cold start)
+```
+
+This runs **before** the container is created, because /workspace is
+bind-mounted at start. The frontend already polls PROVISIONING, so the
+download time needs no new UI.
+
+## 4.4 Upload (BullMQ `upload` job — on Stop)
+
+```text
+Stop: container.stop → revoke SSH keys → status STOPPED → enqueue upload
+Upload: tar -czf <dir> → PutObject (overwrites the previous snapshot)
+```
+
+The workspace is already STOPPED when the upload runs, so no new status
+value is needed for the MVP; the job is observable in BullMQ. A future
+`SNAPSHOTTING` state can surface progress in the dashboard.
+
+## 4.5 Components to build
+
+| Piece | Detail |
+| --- | --- |
+| MinIO service | `docker-compose.yml`: loopback `:9000`, console `:9001`, named volume, bucket auto-bootstrap |
+| Env | `S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` — added to the zod schema in `lib/env.ts` and `.env.example` |
+| `lib/storage.ts` | `snapshotExists()`, `loadSnapshot()`, `saveSnapshot()`, `deleteSnapshots()` via `@aws-sdk/client-s3` (`forcePathStyle: true` for MinIO) |
+| Wire-in | `lib/provision.ts` → restore step before clone; `index.ts` → replace the three `TODO` handlers |
+
+## 4.6 Failure modes and MVP limits
+
+- **Crash between Stop and upload** → previous snapshot stays; BullMQ's 3×
+  retry covers transient MinIO/network failures. A hard crash inside the
+  window loses only that session's last edits (periodic sync is the later fix).
+- **Start while an upload is still running** → local cache hit wins; the
+  in-flight tar may include the fresh writes — harmless, next Stop overwrites.
+- **Full overwrite, no versioning or dedup** → simple and predictable;
+  incremental sync (rsync-style or git bundles) comes after.
+- **Snapshots include `node_modules`** → correctness first; optional excludes
+  are a later tuning knob.
+- **Single-host assumption** → while a workspace is RUNNING, local is
+  newest. Multi-host compute (Type 4) is unaffected: restore-before-mount
+  is already the rule.
+
+## 4.7 Test plan (definition of done)
+
+```text
+1. docker compose up → MinIO healthy, bucket exists
+2. Start workspace → RUNNING (clone path unchanged)
+3. Create a marker file in the workspace → Stop
+   → object appears in the bucket (marker inside the tar)
+4. Delete the local .workspaces/projects/<id> directory → Start
+   → files return from the bucket, marker present, no re-clone needed
+5. Delete the workspace → bucket objects for that workspaceId are gone
+6. Stop MinIO → Stop workspace → upload job fails + retries,
+   workspace row unaffected (still STOPPED)
+```
+
+## 4.8 Build order for step 12
+
+```text
+1. MinIO compose service + env schema + bucket bootstrap
+2. lib/storage.ts (+ a small script test against MinIO)
+3. restore hook in provision.ts
+4. upload + delete handlers in index.ts
+5. E2E: 4.7 checklist, then PR
+```
 
 ---
 
@@ -286,7 +367,8 @@ Move the backend and Docker host to a cloud VM.
                            Workspace A     Workspace B
 ```
 
-This is a good first production-like version.
+This is a good first production-like version. A runnable deployment
+checklist for it lives in section 25.
 
 ---
 
@@ -465,7 +547,7 @@ Main UI:
 
 ```text
 ┌─────────────────────────────────────────────┐
-│ Project        Terminal        Run    AI     │
+│ Project        Terminal        Run           │
 ├───────────────┬─────────────────────────────┤
 │               │                             │
 │ src/          │      Monaco Editor          │
@@ -801,72 +883,53 @@ GitHub
 
 ---
 
-# 18. LLM Architecture
+# 18. LLM Architecture — CUT (delegated to your editor)
 
-The LLM should be an independent service.
+> **Decision: removed from scope.** The platform runs no LLM. Every
+> supported editor already ships one — Cursor, Antigravity and JetBrains AI
+> all reach the workspace over Remote-SSH (section 13.2), so users bring
+> their own AI and their own subscription. The platform pays zero token
+> costs, and building a chat assistant here would mean competing with the
+> tools this platform integrates with, not with the editor market.
+
+What replaces it:
 
 ```text
-                    ┌───────────────┐
-                    │   Browser     │
-                    └───────┬───────┘
-                            ↓
-                     AI Assistant API
-                            ↓
-              ┌─────────────┼─────────────┐
-              ↓             ↓             ↓
-         Selected Code   Repo Search   Terminal Error
-              │             │             │
-              └─────────────┼─────────────┘
-                            ↓
-                           LLM
-                            ↓
-                     Response / Patch
+User's editor (Cursor / Antigravity / VS Code + Copilot)
+        │
+        ↓  Remote-SSH (section 13.2)
+Workspace container at /workspace
+        │
+        ↓
+Full codebase context + terminal + git — AI included
 ```
 
-Possible LLM capabilities:
+Consequences of this decision:
 
-- Explain code
-- Generate code
-- Fix errors
-- Generate tests
-- Refactor
-- Explain terminal errors
-- Search project context
-- Suggest commands
-
-For repository-wide context, use embeddings/vector search later rather than sending the entire repository to the model.
+- Section 19 (AI command safety) is also cut — it only ever guarded an LLM.
+- The `ai_conversations`, `ai_messages` and `ai_command_proposals` tables
+  in `packages/db` are unused; drop them in a later migration.
+- The browser IDE (code-server) intentionally has no assistant. The browser
+  path is for zero-install users; anyone who wants AI opens their editor.
+  If that ever changes, do NOT build a chat product — wire a single
+  "send selection to my own API key" call instead.
 
 ---
 
-# 19. AI Command Safety
+# 19. AI Command Safety — CUT (see section 18)
 
-Never allow the LLM to execute arbitrary commands automatically.
+This section existed only to stop an LLM from executing shell commands on
+the platform without approval. There is no platform LLM, so there is no
+proposal channel to secure: a human types every command into the terminal,
+and the editor runs inside the container under the normal resource limits.
 
-Use:
+Removed expectations:
 
-```text
-LLM
- ↓
-Command proposal
- ↓
-User approval
- ↓
-Policy validation
- ↓
-Container
-```
+- `ai_command_proposals` approval flow
+- LLM policy validation before exec
 
-Example:
-
-```text
-AI: I want to run:
-
-npm install
-
-[Allow] [Reject]
-```
-
-This is especially important because the platform executes code.
+Section 20 (Security Architecture) is unchanged and still fully required —
+it covers the platform itself, not the AI that no longer exists.
 
 ---
 
@@ -994,15 +1057,8 @@ Nginx / Caddy
 
 ## AI
 
-```text
-LLM API
-```
-
-Optional later:
-
-```text
-Vector database / pgvector
-```
+None — cut (section 18). AI comes from the user's editor over Remote-SSH;
+the platform runs no model and stores no API keys.
 
 ## Observability
 
@@ -1042,11 +1098,8 @@ cloud-dev-platform/
 │   ├── workspace/
 │   │   └── Docker management
 │   │
-│   ├── terminal/
-│   │   └── WebSocket terminal
-│   │
-│   └── ai/
-│       └── LLM integration
+│   └── terminal/
+│       └── WebSocket terminal
 │
 ├── infra/
 │   ├── docker/
@@ -1087,11 +1140,11 @@ Do not build everything simultaneously.
         ↓
 11. Redis + BullMQ
         ↓
-12. Object storage
+12. Object storage (design: section 4)
         ↓
 13. Preview URLs
         ↓
-14. LLM assistant
+14. LLM assistant — CUT: editors bring their own AI (section 18)
         ↓
 15. Security hardening
         ↓
@@ -1147,11 +1200,113 @@ The long-term system should look like:
 └──────────────────────────────────────────────────────────┘
 
                          +
-                    LLM Assistant
+               Cursor / Antigravity / VS Code
                          │
                          ↓
-               Code / Repo / Errors
+                 Remote-SSH (section 13.2)
                          │
                          ↓
-                  Suggestions / Patches
+              Bring-your-own AI, your own keys
 ```
+
+---
+
+# 25. Deploy — Type 2 (Single Cloud Server)
+
+The runnable checklist for section 7: one Docker-capable VPS runs the whole
+stack, so the developer's PC stops paying CPU, RAM and disk — it only runs
+a browser and an editor. **No code changes are required**: `STORAGE_ROOT`,
+the Docker socket, Redis and Postgres all simply resolve on the server.
+
+## 25.1 Server requirements
+
+- 2 vCPU / 4 GB RAM minimum. A workspace defaults to 2 CPU + 4096 MB, so
+  budget `(MAX_ACTIVE_WORKSPACES × WORKSPACE_MEMORY_LIMIT_MB) + 1 GB` for
+  Postgres/Redis/backend — or lower the workspace limits on a small box.
+- Docker Engine + compose plugin, bun ≥ 1.4, Ubuntu 24.04 LTS assumed.
+- A domain for HTTPS (an IP works for a first trial).
+
+## 25.2 Environment
+
+```text
+# apps/backend/.env
+DATABASE_URL=postgresql://…                       # compose Postgres or Neon
+REDIS_URL=redis://localhost:6379
+GITHUB_CLIENT_ID=…      GITHUB_CLIENT_SECRET=…
+GITHUB_REDIRECT_URI=https://api.<domain>/auth/github/callback
+CRYPTO_KEY=…                                       # see .env.example
+WEB_URL=https://app.<domain>                       # CORS origin must match
+STORAGE_ROOT=/var/lib/cloudide/workspaces
+
+# apps/web — NEXT_PUBLIC_* is inlined at BUILD time, not runtime
+NEXT_PUBLIC_API_URL=https://api.<domain>
+NEXT_PUBLIC_WSS_URL=wss://ws.<domain>
+```
+
+## 25.3 Checklist
+
+```text
+1.  Provision VPS; non-root user; firewall allows only 22/80/443
+2.  Install Docker Engine + bun
+3.  Clone the repo, fill both .env files (section 25.2)
+4.  docker compose up -d            # postgres (+ redis, + minio after step 12)
+5.  Start the three apps (section 25.5)
+6.  GitHub OAuth app: callback = GITHUB_REDIRECT_URI, homepage = WEB_URL
+7.  Caddy reverse proxy (section 25.4) → https
+8.  Sign in → import a repo → Start → Terminal → Connect (Cursor, 25.6)
+```
+
+## 25.4 Reverse proxy (three origins, one cert)
+
+Separate origins keep routing trivial — the API and the WebSocket terminal
+both answer on `/workspaces/*`, so do not share a hostname with the web app.
+
+```text
+app.<domain>  → localhost:3000   # Next.js
+api.<domain>  → localhost:4000   # Express (CORS already allows WEB_URL)
+ws.<domain>   → localhost:4001   # wss — Caddy handles the Upgrade header
+```
+
+Only 22/80/443 face the internet; 3000/4000/4001/5431/6379 stay bound to
+localhost. WebSocket subprotocols pass through Caddy without extra config.
+
+## 25.5 Process supervision
+
+MVP: three systemd units (`bun run dev` equivalents with `Restart=always`).
+Cleaner later: add web/backend/wss as compose services so `docker compose
+up -d` runs everything — the workspace containers themselves are already
+created by Docker either way.
+
+## 25.6 Cursor / VS Code from your machine
+
+Generated SSH config stays loopback-bound by design (section 13.2) — one
+line routes it through the server instead of exposing ports:
+
+```text
+Host cloudide-…
+  …generated block…
+  ProxyJump user@vps
+```
+
+The ephemeral key issued by Connect authenticates both the jump and the
+workspace. Do not publish workspace ports to the internet.
+
+## 25.7 PaaS reality check (Render, Railway, …)
+
+| Requirement | Managed PaaS | VPS |
+| --- | --- | --- |
+| Docker daemon (create workspace containers) | ❌ no privileged / no Docker-in-Docker | ✅ |
+| Raw TCP ingress for workspace SSH | ❌ HTTP(S) only | ✅ |
+| WebSockets, managed Postgres/Redis | ✅ | ✅ (self-hosted via compose) |
+
+Until this project moves to a scheduler it can share (Type 4/Kubernetes),
+a VPS — or Fly.io, whose machines are real micro-VMs — is the deployment
+target. A PaaS can host the dashboard, but Start would fail: there is no
+Docker for it to talk to.
+
+## 25.8 Why object storage becomes mandatory here
+
+On a laptop, losing `.workspaces` is an inconvenience. On a server it is
+routine: root filesystems are rebuilt, VMs are replaced, disks fail. Once
+deployed, section 4's snapshot flow stops being a nice-to-have — it is the
+thing that lets this box be disposable.
