@@ -8,6 +8,12 @@ const schema = z.object({
   GITHUB_REDIRECT_URI: z.url(),
   CRYPTO_KEY: z.string().min(1),
   REDIS_URL: z.url(),
+  S3_ENDPOINT: z.url().default("http://127.0.0.1:9000"),
+  S3_BUCKET: z.string().min(1).default("cloudide-snapshots"),
+  S3_REGION: z.string().min(1).default("us-east-1"),
+  S3_ACCESS_KEY_ID: z.string().min(1),
+  S3_SECRET_ACCESS_KEY: z.string().min(1),
+
 
   DOCKER_SOCKET: z.string().min(1).default("/var/run/docker.sock"),
   WORKSPACE_IMAGE: z.string().min(1).default("cloudide-workspace:latest"),

@@ -104,16 +104,42 @@ workspacesRouter.post("/", async (req, res) => {
     parsed.data.memoryLimitMb ?? env.WORKSPACE_MEMORY_LIMIT_MB;
   const diskLimitMb = parsed.data.diskLimitMb ?? env.WORKSPACE_DISK_LIMIT_MB;
 
-  const workspace = await prisma.workspace.create({
-    data: {
-      userId: session.user.id,
-      projectId: project.id,
-      status: "PROVISIONING",
-      cpuLimit,
-      memoryLimitMb,
-      diskLimitMb,
-    },
+  // §10 Resume: Start on a project whose latest workspace is STOPPED or
+  // FAILED reopens THAT row instead of creating a sibling. Snapshots are
+  // keyed by workspaceId (§4.2) — a fresh row would look up
+  // workspaces/<new-id>/snapshot.tar.gz, miss, and re-clone, stranding the
+  // previous session's uncommitted work in the old row's snapshot.
+  const latest = await prisma.workspace.findFirst({
+    where: { projectId: project.id },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, status: true },
   });
+  const resumable =
+    latest?.status === "STOPPED" || latest?.status === "FAILED";
+
+  const workspace = resumable
+    ? await prisma.workspace.update({
+        where: { id: latest!.id },
+        data: {
+          status: "PROVISIONING",
+          cpuLimit,
+          memoryLimitMb,
+          diskLimitMb,
+          previewUrl: null,
+          stoppedAt: null,
+          startedAt: null,
+        },
+      })
+    : await prisma.workspace.create({
+        data: {
+          userId: session.user.id,
+          projectId: project.id,
+          status: "PROVISIONING",
+          cpuLimit,
+          memoryLimitMb,
+          diskLimitMb,
+        },
+      });
 
   // Provisioning runs in the BullMQ worker (`restore` job → provisionWorkspace):
   // the snapshot/restore half must land on disk before any container can
