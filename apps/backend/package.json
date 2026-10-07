@@ -18,6 +18,7 @@
     "typescript": "^7"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1147.0",
     "@repo/db": "*",
     "@types/dockerode": "^4.0.1",
     "bullmq": "^6.3.11",

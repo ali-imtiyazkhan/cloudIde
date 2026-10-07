@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { prisma } from "@repo/db";
@@ -6,6 +7,7 @@ import { storagePrefixSchema } from "../validations";
 import { getDocker } from "./docker";
 import { cloneRepository } from "./git";
 import { getEnv } from "./env";
+import { restoreSnapshot } from "./storage";
 
 /** Resolves the workspace mount and refuses anything outside STORAGE_ROOT. */
 async function resolveMount(storagePrefix: string) {
@@ -78,13 +80,21 @@ export async function provisionWorkspace(workspaceId: string): Promise<void> {
   try {
     const hostPath = await resolveMount(workspace.project.storagePrefix);
 
-    // TODO (object storage): if a cloud snapshot exists for this workspace,
-    // download it into hostPath here — the clone below is only the cold start.
-    await cloneRepository({
-      cloneUrl: workspace.project.repository.cloneUrl,
-      token: decrypt(githubAccount.accessTokenEnc),
-      destDir: hostPath,
-    });
+    // Cloud is truth, disk is cache (§4.3). Decision order:
+    //   local .git exists      → cache hit, skip everything
+    //   snapshot in the bucket → download + extract
+    //   neither                → git clone (true cold start)
+    // Must finish BEFORE createContainer — /workspace is bind-mounted at start.
+    if (!existsSync(join(hostPath, ".git"))) {
+      const restored = await restoreSnapshot(workspace.id, hostPath);
+      if (!restored) {
+        await cloneRepository({
+          cloneUrl: workspace.project.repository.cloneUrl,
+          token: decrypt(githubAccount.accessTokenEnc),
+          destDir: hostPath,
+        });
+      }
+    }
 
     const portKey = `${env.WORKSPACE_INTERNAL_PORT}/tcp`;
     const sshKey = `${env.WORKSPACE_SSH_INTERNAL_PORT}/tcp`;
@@ -152,8 +162,13 @@ export async function provisionWorkspace(workspaceId: string): Promise<void> {
           lastActiveAt: new Date(),
         },
       }),
-      prisma.container.create({
-        data: {
+      // Upsert, not create: Container.workspaceId is @unique, and a resumed
+      // workspace (Stop → Start on the same row) already owns a row from its
+      // previous session — creating a second one throws P2002 and would mark
+      // an otherwise healthy provision as FAILED.
+      prisma.container.upsert({
+        where: { workspaceId: workspace.id },
+        create: {
           dockerId: container.id,
           image: env.WORKSPACE_IMAGE,
           status: "RUNNING",
@@ -161,6 +176,16 @@ export async function provisionWorkspace(workspaceId: string): Promise<void> {
           internalPath: "/workspace",
           startedAt: new Date(),
           workspaceId: workspace.id,
+        },
+        update: {
+          dockerId: container.id,
+          image: env.WORKSPACE_IMAGE,
+          status: "RUNNING",
+          hostPath,
+          internalPath: "/workspace",
+          startedAt: new Date(),
+          exitCode: null,
+          stoppedAt: null,
         },
       }),
     ]);

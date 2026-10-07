@@ -1,9 +1,12 @@
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
+import { join, resolve } from "node:path";
 import { getEnv } from "./lib/env";
 import { provisionWorkspace } from "./lib/provision";
 import { closeQueue, startSnapshotWorker } from "./lib/queue";
+import { deleteSnapshots, saveSnapshot } from "./lib/storage";
+import { storagePrefixSchema } from "./validations";
 import { authRouter } from "./routes/auth";
 import { meRouter } from "./routes/me";
 import { projectsRouter } from "./routes/projects";
@@ -53,12 +56,24 @@ const worker = startSnapshotWorker(async (job) => {
       await provisionWorkspace(workspaceId);
       break;
     case "upload":
-      // TODO (object storage): tar the project dir → cloud snapshot.
-      console.log(`TODO upload ${storagePrefix} (workspace ${workspaceId})`);
+      // Stop already flipped the row to STOPPED; this tar → PutObject
+      // overwrites the previous snapshot. BullMQ retries transient failures
+      // (3×, exponential backoff) — the workspace row is untouched either way.
+      // storagePrefix comes from the DB but is still parsed: it is joined
+      // into a filesystem path here, so it gets the same validation as
+      // resolveMount gives it.
+      await saveSnapshot(
+        workspaceId,
+        join(
+          resolve(getEnv().STORAGE_ROOT),
+          storagePrefixSchema.parse(storagePrefix),
+        ),
+      );
       break;
     case "delete":
-      // TODO (object storage): delete this workspace's snapshot objects.
-      console.log(`TODO delete ${storagePrefix} (workspace ${workspaceId})`);
+      // Scoped to workspaceId only — the shared project directory
+      // (storagePrefix) belongs to the project and must survive.
+      await deleteSnapshots(workspaceId);
       break;
   }
 });
