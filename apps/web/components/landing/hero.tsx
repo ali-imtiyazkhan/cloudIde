@@ -12,7 +12,7 @@ const HERO_SCRIM =
 
 export function Hero({ error, checking }: Props) {
   return (
-    <section className="relative isolate flex min-h-[max(100svh,720px)] items-center justify-center overflow-hidden px-5 pb-36 pt-[246px] text-center text-white sm:px-8">
+    <section className="relative isolate flex min-h-[max(100svh,720px)] items-center justify-center overflow-hidden px-5 pb-44 pt-[190px] text-center text-white sm:px-8">
       {/* Scenic backdrop, scrimmed so copy stays readable and the bottom
           dissolves into the off-white page like cloud. */}
       <div className="pointer-events-none absolute inset-0 -z-10" aria-hidden>

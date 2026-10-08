@@ -7,7 +7,6 @@ import { LogoMark } from "./logo";
 const NAV = [
   { href: "/#features", label: "Features" },
   { href: "/#how", label: "How it works" },
-  { href: "/#stack", label: "Stack" },
   { href: "/#gallery", label: "Gallery" },
 ];
 
