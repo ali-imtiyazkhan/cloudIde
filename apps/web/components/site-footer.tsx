@@ -8,15 +8,15 @@ const COLUMNS: { title: string; links: { label: string; href: string }[] }[] = [
     links: [
       { label: "Features", href: "/#features" },
       { label: "How it works", href: "/#how" },
-      { label: "Stack", href: "/#stack" },
+      { label: "Gallery", href: "/#gallery" },
     ],
   },
   {
     title: "Access",
     links: [
       { label: "Browser IDE", href: "/#how" },
-      { label: "Remote-SSH", href: "/#how" },
-      { label: "Terminal", href: "/#how" },
+      { label: "Remote-SSH", href: "/#features" },
+      { label: "Terminal", href: "/#features" },
     ],
   },
   {
@@ -39,7 +39,7 @@ type Props = {
 };
 
 const BLACK_CLOUD =
-  "linear-gradient(180deg, rgba(5,7,12,0) 0%, rgba(5,7,12,0.28) 40%, rgba(5,7,12,0.72) 74%, #05070c 100%)";
+  "linear-gradient(180deg, rgba(5,7,12,0) 0%, rgba(5,7,12,0.35) 34%, rgba(5,7,12,0.8) 70%, #05070c 100%)";
 
 export function SiteFooter({ cloud = false }: Props) {
   return (
@@ -52,7 +52,7 @@ export function SiteFooter({ cloud = false }: Props) {
     >
       {cloud && (
         <div
-          className="pointer-events-none absolute inset-x-0 -top-[180px] h-[180px]"
+          className="pointer-events-none absolute inset-x-0 -top-[140px] h-[140px]"
           style={{ background: BLACK_CLOUD }}
           aria-hidden
         />
@@ -66,19 +66,19 @@ export function SiteFooter({ cloud = false }: Props) {
                 CloudIDE
               </span>
             </span>
-            <p className="mt-4 text-sm leading-relaxed text-muted">
+            <p className="mt-4 text-sm leading-relaxed text-white/60">
               A cloud GitHub development platform. Import a repository, run it
               in an isolated container, and keep your work in object storage —
               not on your laptop.
             </p>
-            <p className="mt-5 font-mono text-[11px] uppercase tracking-[0.18em] text-accent/80">
+            <p className="mt-5 font-mono text-[11px] uppercase tracking-[0.18em] text-[#7dd3fc]/85">
               cloud is truth · disk is cache
             </p>
           </div>
 
           {COLUMNS.map((column) => (
             <nav key={column.title} aria-label={column.title}>
-              <h3 className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted">
+              <h3 className="font-mono text-[11px] uppercase tracking-[0.18em] text-white/45">
                 {column.title}
               </h3>
               <ul className="mt-4 space-y-2.5">
@@ -86,7 +86,7 @@ export function SiteFooter({ cloud = false }: Props) {
                   <li key={link.label}>
                     <Link
                       href={link.href}
-                      className="text-sm text-foreground/75 transition-colors duration-200 hover:text-accent"
+                      className="text-sm text-white/70 transition-colors duration-200 hover:text-white"
                     >
                       {link.label}
                     </Link>
@@ -97,11 +97,11 @@ export function SiteFooter({ cloud = false }: Props) {
           ))}
         </div>
 
-        <div className="mt-12 flex flex-col gap-3 border-t border-line/50 pt-6 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-xs text-muted">
+        <div className="mt-12 flex flex-col gap-3 border-t border-white/10 pt-6 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-white/45">
             © {new Date().getFullYear()} CloudIDE
           </p>
-          <p className="font-mono text-xs text-muted">
+          <p className="font-mono text-xs text-white/40">
             Storage persists. Compute is disposable.
           </p>
         </div>

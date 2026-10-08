@@ -8,7 +8,6 @@ import { SiteFooter } from "../components/site-footer";
 import { Hero } from "../components/landing/hero";
 import { Features } from "../components/landing/features";
 import { HowItWorks } from "../components/landing/how-it-works";
-import { Stack } from "../components/landing/stack";
 import { Gallery } from "../components/landing/gallery";
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -59,7 +58,6 @@ export default function Home() {
         <Hero error={error} checking={checking} />
         <Features />
         <HowItWorks />
-        <Stack />
         <Gallery checking={checking} />
       </main>
 

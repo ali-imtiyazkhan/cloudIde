@@ -13,7 +13,7 @@ export function Gallery({ checking }: Props) {
   return (
     <section
       id="gallery"
-      className="relative isolate flex min-h-[min(78svh,760px)] scroll-mt-24 items-center justify-center overflow-hidden px-5 py-28 text-center text-white sm:px-8"
+      className="relative isolate flex min-h-[min(74svh,720px)] scroll-mt-24 items-center justify-center overflow-hidden px-5 pb-40 pt-24 text-center text-white sm:px-8 sm:pb-44 sm:pt-28"
     >
       <div className="pointer-events-none absolute inset-0 -z-10" aria-hidden>
         <Image
@@ -21,7 +21,7 @@ export function Gallery({ checking }: Props) {
           alt=""
           fill
           sizes="100vw"
-          className="object-cover object-center"
+          className="object-cover object-[center_38%]"
         />
         <div className="absolute inset-0" style={{ background: GALLERY_SCRIM }} />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_70%_60%_at_50%_55%,rgba(3,8,16,0.3),transparent_70%)]" />
