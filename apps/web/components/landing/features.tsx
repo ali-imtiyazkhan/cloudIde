@@ -73,16 +73,16 @@ const ICONS: Record<string, ReactNode> = {
 
 export function Features() {
   return (
-    <section id="features" className="relative z-10 py-20 sm:py-28">
+    <section id="features" className="relative z-10 scroll-mt-24 py-28 sm:py-36">
       <div className="mx-auto max-w-7xl px-5 sm:px-8">
         <div className="mx-auto max-w-2xl text-center">
-          <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-accent">
+          <p className="inline-flex rounded-full border border-[#cfe3fb] bg-[#eff6ff] px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.18em] text-[#1d6fd1]">
             Everything, working
           </p>
-          <h2 className="mt-4 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
+          <h2 className="mt-5 text-balance text-3xl font-semibold tracking-tight text-[#0b1220] sm:text-4xl">
             A complete platform, not a demo
           </h2>
-          <p className="mt-4 text-muted">
+          <p className="mt-4 leading-relaxed text-[#5a6474]">
             Sign-in, compute, editors and storage are all wired together —
             each one validated end to end against a real queue and a real
             bucket.
@@ -93,13 +93,9 @@ export function Features() {
           {FEATURES.map((feature) => (
             <article
               key={feature.title}
-              className="group relative overflow-hidden rounded-2xl border border-line bg-surface/70 p-6 backdrop-blur-xl transition-all duration-300 hover:-translate-y-1 hover:border-accent/45 hover:bg-surface-strong/80"
+              className="group relative overflow-hidden rounded-2xl border border-[#e6eaf1] bg-[#fbfcfe] p-6 shadow-[0_10px_30px_rgba(11,18,32,0.05)] transition-all duration-300 hover:-translate-y-1 hover:border-[#d5e2f2] hover:shadow-[0_18px_40px_rgba(11,18,32,0.09)]"
             >
-              <div
-                className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-accent-strong/20 opacity-0 blur-[60px] transition-opacity duration-500 group-hover:opacity-100"
-                aria-hidden
-              />
-              <span className="relative grid h-10 w-10 place-items-center rounded-xl border border-line bg-surface text-accent transition-colors duration-300 group-hover:border-accent/50">
+              <span className="grid h-10 w-10 place-items-center rounded-xl border border-[#dbe7f7] bg-[#eff6ff] text-[#1d6fd1] transition-colors duration-300 group-hover:border-[#bcd9f6]">
                 <svg
                   viewBox="0 0 24 24"
                   width="18"
@@ -115,16 +111,16 @@ export function Features() {
                 </svg>
               </span>
 
-              <div className="relative mt-5 flex items-center gap-2.5">
-                <h3 className="text-[15px] font-semibold tracking-tight">
+              <div className="mt-5 flex items-center gap-2.5">
+                <h3 className="text-[15px] font-semibold tracking-tight text-[#0b1220]">
                   {feature.title}
                 </h3>
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-success/35 bg-success/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-success">
-                  <span className="h-1 w-1 rounded-full bg-success" />
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-[#bbf0d0] bg-[#e8f7ee] px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-[#15803d]">
+                  <span className="h-1 w-1 rounded-full bg-[#15803d]" />
                   live
                 </span>
               </div>
-              <p className="relative mt-2.5 text-sm leading-relaxed text-muted">
+              <p className="mt-2.5 text-sm leading-relaxed text-[#5a6474]">
                 {feature.body}
               </p>
             </article>

@@ -9,7 +9,7 @@ import { Hero } from "../components/landing/hero";
 import { Features } from "../components/landing/features";
 import { HowItWorks } from "../components/landing/how-it-works";
 import { Stack } from "../components/landing/stack";
-import { FinalCta } from "../components/landing/cta";
+import { Gallery } from "../components/landing/gallery";
 
 const ERROR_MESSAGES: Record<string, string> = {
   oauth_state: "Sign-in was cancelled or expired. Please try again.",
@@ -41,15 +41,14 @@ export default function Home() {
   }, []);
 
   return (
-    // z-10 is load-bearing: the global VideoBackground is a fixed layer at
-    // z-index 0, so unpositioned content would paint underneath it.
-    <div className="relative z-10 flex min-h-svh flex-col">
+    <div className="relative z-10 flex min-h-svh flex-col bg-[#f4f6fa] text-[#0b1220]">
       <SiteHeader
+        variant="landing"
         actions={
           <a
             href={`${API_URL}/auth/github`}
             aria-disabled={checking}
-            className="rounded-lg border border-accent/40 bg-accent/12 px-3.5 py-2 text-sm font-medium text-accent transition-all duration-300 hover:border-accent/70 hover:bg-accent/20 aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+            className="rounded-full bg-[#0b1220] px-4 py-2 text-sm font-medium text-white transition-colors duration-200 hover:bg-[#1d2836] aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
           >
             Sign in
           </a>
@@ -61,10 +60,10 @@ export default function Home() {
         <Features />
         <HowItWorks />
         <Stack />
-        <FinalCta checking={checking} />
+        <Gallery checking={checking} />
       </main>
 
-      <SiteFooter />
+      <SiteFooter cloud />
     </div>
   );
 }
