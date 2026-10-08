@@ -2,6 +2,23 @@
   min-height: 100svh;
   position: relative;
   z-index: 1;
+  background:
+    radial-gradient(
+      ellipse 80% 55% at 15% -10%,
+      rgba(20, 58, 92, 0.55) 0%,
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 70% 50% at 95% 5%,
+      rgba(13, 47, 74, 0.5) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse 90% 60% at 50% 110%,
+      rgba(10, 40, 62, 0.45) 0%,
+      transparent 60%
+    ),
+    var(--background);
 }
 
 .main {

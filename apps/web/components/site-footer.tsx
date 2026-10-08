@@ -29,9 +29,34 @@ const COLUMNS: { title: string; links: { label: string; href: string }[] }[] = [
   },
 ];
 
-export function SiteFooter() {
+type Props = {
+  /**
+   * When true the footer paints a black "cloud" gradient that hangs above it,
+   * so the section above dissolves into the black footer instead of ending on
+   * a hard line. Used by the landing page over its photo band.
+   */
+  cloud?: boolean;
+};
+
+const BLACK_CLOUD =
+  "linear-gradient(180deg, rgba(5,7,12,0) 0%, rgba(5,7,12,0.28) 40%, rgba(5,7,12,0.72) 74%, #05070c 100%)";
+
+export function SiteFooter({ cloud = false }: Props) {
   return (
-    <footer className="relative z-10 border-t border-line/60 bg-background/70 backdrop-blur-xl">
+    <footer
+      className={
+        cloud
+          ? "relative z-10 bg-[#05070c]"
+          : "relative z-10 border-t border-line/60 bg-background/70 backdrop-blur-xl"
+      }
+    >
+      {cloud && (
+        <div
+          className="pointer-events-none absolute inset-x-0 -top-[180px] h-[180px]"
+          style={{ background: BLACK_CLOUD }}
+          aria-hidden
+        />
+      )}
       <div className="mx-auto max-w-7xl px-5 py-14 sm:px-8">
         <div className="grid gap-10 md:grid-cols-[1.7fr_repeat(3,minmax(0,1fr))]">
           <div className="max-w-sm">
