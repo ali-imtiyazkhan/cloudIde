@@ -36,16 +36,21 @@ type Props = {
    * a hard line. Used by the landing page over its photo band.
    */
   cloud?: boolean;
+  /**
+   * Solid black footer with no dissolve — used on the light dashboard page,
+   * where the cloud band would darken content above it.
+   */
+  solid?: boolean;
 };
 
 const BLACK_CLOUD =
   "linear-gradient(180deg, rgba(5,7,12,0) 0%, rgba(5,7,12,0.35) 34%, rgba(5,7,12,0.8) 70%, #05070c 100%)";
 
-export function SiteFooter({ cloud = false }: Props) {
+export function SiteFooter({ cloud = false, solid = false }: Props) {
   return (
     <footer
       className={
-        cloud
+        cloud || solid
           ? "relative z-10 bg-[#05070c]"
           : "relative z-10 border-t border-line/60 bg-background/70 backdrop-blur-xl"
       }

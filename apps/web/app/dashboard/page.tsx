@@ -458,7 +458,10 @@ export default function DashboardPage() {
 
         <section>
           <div className={styles.sectionHead}>
-            <h2>Projects</h2>
+            <div>
+              <span className={styles.eyebrow}>Workspace</span>
+              <h2>Projects</h2>
+            </div>
             <span className={styles.hint}>
               Imported repositories ready for a workspace
             </span>
@@ -500,7 +503,10 @@ export default function DashboardPage() {
 
         <section>
           <div className={styles.sectionHead}>
-            <h2>GitHub repositories</h2>
+            <div>
+              <span className={styles.eyebrow}>Import</span>
+              <h2>GitHub repositories</h2>
+            </div>
             <input
               className={styles.search}
               type="search"
@@ -576,7 +582,7 @@ export default function DashboardPage() {
         </section>
       </main>
 
-      <SiteFooter />
+      <SiteFooter solid />
 
       {terminalFor && (
         <div
