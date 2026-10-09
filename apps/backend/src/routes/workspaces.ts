@@ -2,7 +2,7 @@ import { Router } from "express";
 import { prisma, type WorkspaceStatus } from "@repo/db";
 import type Docker from "dockerode";
 import { fail } from "../lib/http";
-import { getDocker } from "../lib/docker";
+import { getDocker, isAlreadyStopped, isNoSuchContainer } from "../lib/docker";
 import { generateSshKeyPair } from "../lib/ssh";
 import { getEnv } from "../lib/env";
 import { enqueueSnapJob } from "../lib/queue";
@@ -233,12 +233,22 @@ workspacesRouter.get("/:id/status", async (req, res) => {
       },
     });
   } catch (error) {
-    // Docker knows nothing about it, so the row is stale.
+    // The row is stale or the daemon is down — either way Docker cannot
+    // confirm the container. FAILED puts the dashboard back on "Retry",
+    // whose POST /workspaces re-provisions a fresh container.
     console.error("container inspect failed:", error);
     await prisma.workspace.update({
       where: { id: workspace.id },
       data: { status: "FAILED" },
     });
+    if (isNoSuchContainer(error)) {
+      return fail(
+        res,
+        409,
+        "container_missing",
+        "The workspace container no longer exists. Start the workspace to create a new one.",
+      );
+    }
     return fail(
       res,
       502,
@@ -278,6 +288,20 @@ workspacesRouter.post("/:id/connect", async (req, res) => {
       ]?.[0]?.HostPort;
   } catch (error) {
     console.error("connect: container inspect failed:", error);
+    if (isNoSuchContainer(error)) {
+      // Stale row — flip it so the dashboard offers "Retry" (re-provisions)
+      // instead of a connect button that can never succeed.
+      await prisma.workspace.update({
+        where: { id: workspace.id },
+        data: { status: "FAILED" },
+      });
+      return fail(
+        res,
+        409,
+        "container_missing",
+        "The workspace container no longer exists. Start the workspace to create a new one.",
+      );
+    }
     return fail(
       res,
       502,
@@ -365,9 +389,21 @@ workspacesRouter.post("/:id/stop", async (req, res) => {
     // Revoke outstanding IDE-connection keys before the box goes down.
     await setAuthorizedKeys(container, "").catch(() => undefined);
 
-    await container.stop({ t: 10 });
+    try {
+      await container.stop({ t: 10 });
+    } catch (error) {
+      // Idempotent stop: a container removed by hand (404, e.g. deleted in
+      // Docker Desktop) and one that is already stopped (304) both mean the
+      // box is down — fall through and reconcile the rows below. Anything
+      // else is a real Docker failure.
+      if (!isNoSuchContainer(error) && !isAlreadyStopped(error)) throw error;
+    }
 
-    const info = await container.inspect();
+    // Read the exit code while Docker still knows the container; if it was
+    // removed outright, keep whatever the row already recorded (null when
+    // nobody ever saw it exit).
+    const info = await container.inspect().catch(() => null);
+    const exitCode = info ? info.State.ExitCode : workspace.container.exitCode;
 
     const [updated] = await prisma.$transaction([
       prisma.workspace.update({
@@ -378,7 +414,7 @@ workspacesRouter.post("/:id/stop", async (req, res) => {
         where: { id: workspace.container.id },
         data: {
           status: "EXITED",
-          exitCode: info.State.ExitCode,
+          exitCode,
           stoppedAt: new Date(),
         },
       }),
@@ -387,7 +423,7 @@ workspacesRouter.post("/:id/stop", async (req, res) => {
           workspaceId: workspace.id,
           dockerId: workspace.container.dockerId,
           image: workspace.container.image,
-          exitCode: info.State.ExitCode,
+          exitCode,
           startedAt: workspace.startedAt ?? new Date(),
           stoppedAt: new Date(),
         },
