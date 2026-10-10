@@ -15,7 +15,20 @@ const schema = z.object({
   S3_SECRET_ACCESS_KEY: z.string().min(1),
 
 
-  DOCKER_SOCKET: z.string().min(1).default("/var/run/docker.sock"),
+  // Docker Desktop on Windows exposes a named pipe, not a Unix socket.
+  // macOS uses ~/.docker/run/docker.sock (newer Desktop installs); Linux uses
+  // the classic /var/run/docker.sock. dockerode accepts named pipes via the
+  // same socketPath option, so one option works everywhere.
+  DOCKER_SOCKET: z
+    .string()
+    .min(1)
+    .default(
+      process.platform === "win32"
+        ? "//./pipe/docker_engine"
+        : process.platform === "darwin"
+          ? `${process.env.HOME}/.docker/run/docker.sock`
+          : "/var/run/docker.sock",
+    ),
   WORKSPACE_IMAGE: z.string().min(1).default("cloudide-workspace:latest"),
   // Loopback only. code-server runs with AUTH=none, so 0.0.0.0 would expose
   // an unauthenticated shell to anyone who can reach the port.

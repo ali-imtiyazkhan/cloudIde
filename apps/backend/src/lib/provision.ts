@@ -1,13 +1,19 @@
+import type Docker from "dockerode";
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { prisma } from "@repo/db";
 import { decrypt } from "../crypto";
 import { storagePrefixSchema } from "../validations";
-import { getDocker } from "./docker";
+import { getDocker, isStorageOptUnsupported } from "./docker";
 import { cloneRepository } from "./git";
 import { getEnv } from "./env";
 import { restoreSnapshot } from "./storage";
+
+// Learned on the first create: graphdriver disk quota (StorageOpt.size)
+// is not universal, and asking an unsupported daemon fails the whole
+// create. Once proven false for this daemon, never send it again.
+let storageOptSupported = true;
 
 /** Resolves the workspace mount and refuses anything outside STORAGE_ROOT. */
 async function resolveMount(storagePrefix: string) {
@@ -106,7 +112,35 @@ export async function provisionWorkspace(workspaceId: string): Promise<void> {
       .remove({ force: true })
       .catch(() => undefined);
 
-    const container = await getDocker().createContainer({
+    const hostConfig: Docker.HostConfig = {
+      // Loopback only. Publishing 0.0.0.0 hands an unauthenticated
+      // code-server shell to anyone who can reach the port.
+      PortBindings: {
+        [portKey]: [{ HostIp: env.WORKSPACE_BIND_IP, HostPort: "" }],
+        // SSH for "Connect to VS Code / Cursor / Antigravity" — also
+        // loopback-only; auth is the ephemeral key issued by the API.
+        [sshKey]: [{ HostIp: env.WORKSPACE_BIND_IP, HostPort: "" }],
+      },
+      Binds: [`${hostPath}:/workspace`],
+      NanoCpus:
+        (workspace.cpuLimit ?? env.WORKSPACE_CPU_LIMIT) * 1_000_000_000,
+      Memory: (workspace.memoryLimitMb ?? env.WORKSPACE_MEMORY_LIMIT_MB) * 1024 * 1024,
+      AutoRemove: false,
+      RestartPolicy: { Name: "no" },
+    };
+
+    // Disk quota via `StorageOpt.size` is honoured only on overlay2 over
+    // xfs with 'pquota'. Everywhere else — notably Docker Desktop on
+    // Windows/macOS — the daemon rejects the whole create with a 500, so
+    // the first attempt includes it and a 500 with this message drops it
+    // for the rest of the process.
+    if (storageOptSupported) {
+      hostConfig.StorageOpt = {
+        size: `${workspace.diskLimitMb ?? env.WORKSPACE_DISK_LIMIT_MB}m`,
+      };
+    }
+
+    const createOptions: Docker.ContainerCreateOptions = {
       Image: env.WORKSPACE_IMAGE,
       // workspace.id is a UUID, so this can never collide or inject.
       name: `cloudide-ws-${workspace.id}`,
@@ -123,31 +157,47 @@ export async function provisionWorkspace(workspaceId: string): Promise<void> {
         "cloudide.workspaceId": workspace.id,
         "cloudide.userId": workspace.userId,
       },
-      HostConfig: {
-        // Loopback only. Publishing 0.0.0.0 hands an unauthenticated
-        // code-server shell to anyone who can reach the port.
-        PortBindings: {
-          [portKey]: [{ HostIp: env.WORKSPACE_BIND_IP, HostPort: "" }],
-          // SSH for "Connect to VS Code / Cursor / Antigravity" — also
-          // loopback-only; auth is the ephemeral key issued by the API.
-          [sshKey]: [{ HostIp: env.WORKSPACE_BIND_IP, HostPort: "" }],
-        },
-        Binds: [`${hostPath}:/workspace`],
-        NanoCpus:
-          (workspace.cpuLimit ?? env.WORKSPACE_CPU_LIMIT) * 1_000_000_000,
-        Memory: (workspace.memoryLimitMb ?? env.WORKSPACE_MEMORY_LIMIT_MB) * 1024 * 1024,
-        // Only honoured on overlay2/xfs; harmless elsewhere.
-        StorageOpt: { size: `${workspace.diskLimitMb}m` },
-        AutoRemove: false,
-        RestartPolicy: { Name: "no" },
-      },
-    });
+      HostConfig: hostConfig,
+    };
+
+    let container: Docker.Container;
+    try {
+      container = await getDocker().createContainer(createOptions);
+    } catch (error) {
+      if (!storageOptSupported || !isStorageOptUnsupported(error)) {
+        throw error;
+      }
+      storageOptSupported = false;
+      delete hostConfig.StorageOpt;
+      container = await getDocker().createContainer(createOptions);
+    }
 
     await container.start();
 
-    const info = await container.inspect();
-    const hostPort = info.NetworkSettings.Ports?.[portKey]?.[0]?.HostPort;
-    if (!hostPort) throw new Error("docker did not publish a host port");
+    // Docker Desktop (Windows/macOS, WSL2 backend) returns from start()
+    // before the host-side port proxy has bound, so an immediate inspect
+    // sees an empty Ports map. Poll briefly; if the container dies instead,
+    // surface its exit code and last log lines rather than a misleading
+    // "did not publish a host port".
+    let hostPort: string | undefined;
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      const info = await container.inspect();
+      hostPort = info.NetworkSettings.Ports?.[portKey]?.[0]?.HostPort;
+      if (hostPort) break;
+      if (!info.State.Running) {
+        const logs = await container
+          .logs({ stdout: true, stderr: true, tail: 20 })
+          .catch(() => "");
+        throw new Error(
+          `workspace container exited (code ${info.State.ExitCode}): ${logs}`,
+        );
+      }
+      if (Date.now() > deadline) {
+        throw new Error("docker did not publish a host port");
+      }
+      await new Promise((r) => setTimeout(r, 250));
+    }
 
     const previewUrl = `http://${env.WORKSPACE_BIND_IP}:${hostPort}`;
 

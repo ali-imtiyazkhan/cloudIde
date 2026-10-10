@@ -49,3 +49,16 @@ export function isNoSuchContainer(error: unknown) {
 export function isAlreadyStopped(error: unknown) {
   return matchesDockerError(error, 304, /already stopped/i);
 }
+
+/**
+ * True when the daemon rejected `--storage-opt size=` (graphdriver disk
+ * quota). The option is only honoured on overlay2 over xfs with 'pquota';
+ * Docker Desktop (Windows/macOS) and most Linux dev boxes answer 500, and
+ * the *entire* create fails — it is not silently ignored. Matched on the
+ * message alone: 500 is far too generic to flag every server error.
+ */
+export function isStorageOptUnsupported(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const { message } = error as { message?: string };
+  return /storage-opt is supported only/i.test(message ?? "");
+}
