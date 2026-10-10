@@ -1,0 +1,5 @@
+# These files are copied into the Linux image verbatim. CRLF breaks them:
+# the kernel execs "#!/bin/sh\r", and sshd reads values like "2222\r".
+*.sh text eol=lf
+infra/docker/sshd_config text eol=lf
+infra/docker/Dockerfile text eol=lf
