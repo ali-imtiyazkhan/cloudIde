@@ -1,7 +1,7 @@
 # CloudIDE
 
 **Self-hosted cloud development environments.** Import a GitHub repo, get a
-Docker workspace in one click, and edit it in *your* Cursor / VS Code over
+Docker workspace in one click, and edit it in *your* Cursor / VS Code over or any other IDE
 SSH — cloud CPU and RAM, your own editor, your own AI subscription.
 
 > Open-source Codespaces alternative that runs on **your** Docker and opens
